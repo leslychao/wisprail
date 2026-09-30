@@ -1,0 +1,9 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Build Distributions" type="ShConfigurationType">
+    <option name="SCRIPT_TEXT" value="powershell.exe -NoProfile -File deploy/build-distributions.ps1" />
+    <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <option name="EXECUTE_IN_TERMINAL" value="false" />
+    <option name="EXECUTE_SCRIPT_FILE" value="false" />
+    <method v="2" />
+  </configuration>
+</component>

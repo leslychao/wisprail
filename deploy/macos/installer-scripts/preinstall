@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+directory='/Library/Application Support/Wisprail'
+if [ -L "$directory" ]; then
+    echo 'Wisprail state directory must not be a symbolic link.' >&2
+    exit 1
+fi
+if [ -d "$directory" ] && [ "$(stat -f '%Su' "$directory")" != root ]; then
+    echo 'Wisprail state directory must belong to root.' >&2
+    exit 1
+fi
+if [ -d "$directory" ]; then
+    permissions=$(stat -f '%Lp' "$directory")
+    if [ "$((0$permissions & 0022))" -ne 0 ]; then
+        echo 'Wisprail state directory must not be writable by other accounts.' >&2
+        exit 1
+    fi
+fi
+if [ -L "$directory/agent.json" ] || [ -L "$directory/service" ]; then
+    echo 'Symbolic links in Wisprail service state are forbidden.' >&2
+    exit 1
+fi
+if launchctl print system/app.wisprail.agent >/dev/null 2>&1; then
+    launchctl bootout system/app.wisprail.agent
+fi
+attempt=0
+while [ -f "$directory/service/runtime/ownership.json" ] && [ "$attempt" -lt 75 ]; do
+    sleep 1
+    attempt=$((attempt + 1))
+done
+if [ -f "$directory/service/runtime/ownership.json" ]; then
+    echo 'Network cleanup is not confirmed. Start the installed component and retry cleanup.' >&2
+    exit 1
+fi

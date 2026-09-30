@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+user=$(stat -f '%Su' /dev/console)
+case "$user" in ''|root|loginwindow|*[!a-zA-Z0-9._-]*) echo 'Install while the intended user is logged in.' >&2; exit 1;; esac
+directory='/Library/Application Support/Wisprail'
+install -d -o root -g wheel -m 755 "$directory"
+if [ ! -f "$directory/agent.json" ]; then
+    printf '{"allowedUser":"%s"}\n' "$user" > "$directory/agent.json"
+fi
+chown root:wheel "$directory/agent.json"
+chmod 644 "$directory/agent.json"
+chown -R root:wheel /Applications/Wisprail.app
+chmod -R go-w /Applications/Wisprail.app
+echo 'Open Wisprail and enable the system component in Settings. macOS owns the authorization prompt.'
