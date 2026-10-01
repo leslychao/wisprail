@@ -18,7 +18,7 @@ Windows x64, PowerShell из корня:
 
 ```powershell
 $env:JAVA_HOME = 'C:\path\to\jdk-21'
-python deploy/fetch-engine.py --platform windows-amd64
+python build/fetch-engine.py --platform windows-amd64
 .\mvnw.cmd -B -ntp verify
 & "$env:JAVA_HOME\bin\java.exe" --module-path frontend/target/javafx --add-modules javafx.controls -cp 'frontend/target/wisprail-desktop-0.1.0-SNAPSHOT.jar;frontend/target/lib/*' app.wisprail.ui.DesktopLauncher
 ```
@@ -27,8 +27,8 @@ macOS 13+, JDK той же архитектуры, что и приложени�
 
 ```sh
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
-python3 deploy/fetch-engine.py --platform darwin-arm64  # darwin-amd64 для Intel
-sh ./mvnw -B -ntp -Dwisprail.engine="$PWD/deploy/target/engine/sing-box" verify
+python3 build/fetch-engine.py --platform darwin-arm64  # darwin-amd64 для Intel
+sh ./mvnw -B -ntp -Dwisprail.engine="$PWD/build/target/engine/sing-box" verify
 "$JAVA_HOME/bin/java" --module-path frontend/target/javafx --add-modules javafx.controls \
   -cp 'frontend/target/wisprail-desktop-0.1.0-SNAPSHOT.jar:frontend/target/lib/*' \
   app.wisprail.ui.DesktopLauncher
@@ -47,13 +47,13 @@ sh ./mvnw -B -ntp -Dwisprail.engine="$PWD/deploy/target/engine/sing-box" verify
 Она запускает из корня проекта одну команду:
 
 ```powershell
-powershell.exe -NoProfile -File deploy/build-distributions.ps1
+powershell.exe -NoProfile -File build/build-distributions.ps1
 ```
 
 Можно выполнить тот же файл непосредственно в уже настроенном PowerShell:
 
 ```powershell
-& ./deploy/build-distributions.ps1
+& ./build/build-distributions.ps1
 ```
 
 Нужны Git, Python 3, Maven Wrapper, JDK **21.0.11 x64** в `JAVA_HOME`, интернет для зависимостей
@@ -70,7 +70,7 @@ PowerShell 7 с `RemoteSigned`; конфигурация IDEA сохраняет
 По умолчанию оба Mac ZIP собираются **локально на Windows через Docker Desktop с Linux engine**.
 Mac, macOS VM, Xcode на Windows, Apple ID и личный сертификат для этой сборки не требуются.
 Контейнер получает закреплённый SDK 14.5 непосредственно с Apple CDN, Microsoft JDK 21.0.11,
-OSXCross и `rcodesign`; URL и SHA-256 находятся в `deploy/macos/cross/inputs.json`.
+OSXCross и `rcodesign`; URL и SHA-256 находятся в `build/macos/cross/inputs.json`.
 Первый запуск скачивает инструменты и создаёт локальный образ; далее Docker повторно использует
 слои и Maven volume `wisprail-macos-maven`. Нужны интернет и свободное место для образа,
 двух runtime и промежуточных пакетов (ориентир — 10 ГБ).
@@ -95,7 +95,7 @@ macOS остаются отдельной приёмкой. Контейнер �
 ```powershell
 $env:WISPRAIL_MAC_ARM64_HOST = 'authorized-mac-arm64-alias'
 $env:WISPRAIL_MAC_X64_HOST = 'authorized-mac-x64-alias'
-& ./deploy/build-distributions.ps1 -MacBuildMode ssh
+& ./build/build-distributions.ps1 -MacBuildMode ssh
 ```
 
 На каждом Mac нужны macOS 13+, JDK 21.0.11 нужной архитектуры, Python 3 и Xcode Command Line
@@ -108,9 +108,9 @@ Tools (`clang`, `lipo`, `codesign`, `pkgbuild`, `ditto`). SSH работает �
 проверяет их хеши до/после копирования и собирает в чистом каталоге снимка через существующие
 платформенные скрипты. Git/IDE-данные, `.env`, результаты `target` не включаются.
 Все платформы получают один source manifest, SHA-256 снимка и версию корневого POM.
-Снимок и промежуточные результаты сохраняются в `deploy/target/builds/<buildId>`.
+Снимок и промежуточные результаты сохраняются в `build/target/builds/<buildId>`.
 
-Результаты: **`deploy/target/dist`**:
+Результаты: **`build/target/dist`**:
 
 - `wisprail-<version>-windows-x64.zip`
 - `wisprail-<version>-macos-arm64.zip`
@@ -124,12 +124,12 @@ Tools (`clang`, `lipo`, `codesign`, `pkgbuild`, `ditto`). SSH работает �
 и Windows `BUILT` не означают готовность Mac. Старые архивы текущей версии удаляются перед
 платформенными сборками; учитывайте только результаты текущего `build-results.json`.
 Сборка не устанавливает службу, не подключает VPN и не меняет системную сеть.
-Логи контейнера и результаты Linux-тестов: `deploy/target/builds/<buildId>/macos-<arch>`.
+Логи контейнера и результаты Linux-тестов: `build/target/builds/<buildId>/macos-<arch>`.
 `BUILT` означает, что ZIP создан и прошёл проверки упаковки; это не подтверждение запуска
 на macOS. `build-info.json` явно содержит `macosLaunch: NOT_RUN` и `macosInstallation: NOT_RUN`
 для кросс-сборки. Подпись `ad-hoc` не является Developer ID или notarization.
 
-Изолированные проверки `deploy/macos/cross/test_package.py` выполняются автоматически
+Изолированные проверки `build/macos/cross/test_package.py` выполняются автоматически
 перед Maven в каждом контейнере сборки. Они компилируют небольшие реальные ARM/Intel Mach-O,
 проверяют порчу подписи и содержимого, а также обратную распаковку PKG/ZIP.
 
@@ -138,9 +138,9 @@ Tools (`clang`, `lipo`, `codesign`, `pkgbuild`, `ditto`). SSH работает �
 Платформенные команды остаются доступны отдельно:
 
 ```powershell
-& ./deploy/package-windows.ps1
+& ./build/package-windows.ps1
 # Дополнительный режим подписанного MSI; нужны WiX 3 и Windows SDK signtool:
-& ./deploy/package-windows.ps1 -Type msi -Release -SigningThumbprint '<thumbprint>'
+& ./build/package-windows.ps1 -Type msi -Release -SigningThumbprint '<thumbprint>'
 ```
 
 Для службы Windows образ должен находиться в `C:\Program Files\Wisprail` либо быть установлен
@@ -155,7 +155,7 @@ macOS, обычный локальный ZIP и PKG:
 
 ```sh
 export JAVA_HOME=$(/usr/libexec/java_home -v 21.0.11 -a arm64)
-sh deploy/package-macos.sh --architecture arm64  # x64 для Intel/JDK x86_64
+sh build/package-macos.sh --architecture arm64  # x64 для Intel/JDK x86_64
 ```
 
 Подписанный выпуск — отдельный, явно включаемый режим:
@@ -164,7 +164,7 @@ sh deploy/package-macos.sh --architecture arm64  # x64 для Intel/JDK x86_64
 export WISPRAIL_APP_SIGN_IDENTITY='Developer ID Application: ...'
 export WISPRAIL_INSTALLER_SIGN_IDENTITY='Developer ID Installer: ...'
 export WISPRAIL_NOTARY_PROFILE='wisprail-notary'
-sh deploy/package-macos.sh --architecture arm64 --release
+sh build/package-macos.sh --architecture arm64 --release
 ```
 
 В режиме release подписываются приложение и native-библиотеки, PKG отправляется на
@@ -180,14 +180,14 @@ MSI проверяет очистку при удалении. Профили и
 ## Повторение проверки
 
 ```powershell
-& ./deploy/verify-windows-zip.ps1 -Archive ./deploy/target/dist/wisprail-0.1.0-SNAPSHOT-windows-x64.zip
+& ./build/verify-windows-zip.ps1 -Archive ./build/target/dist/wisprail-0.1.0-SNAPSHOT-windows-x64.zip
 ```
 
 Этот отдельный тест запускается **обычным пользователем** в интерактивной Windows-сессии.
 Он распаковывает ZIP в новый каталог, убирает системную Java из окружения дочернего процесса,
 использует отдельные пользовательские данные и native-кеш, проверяет загруженные библиотеки,
 подписи runtime, окно, штатный выход и события Code Integrity. Служба не устанавливается.
-Доказательства: `deploy/target/acceptance/windows-<timestamp>` и `latest-windows.json`.
+Доказательства: `build/target/acceptance/windows-<timestamp>` и `latest-windows.json`.
 
 `DesignScenariosTest` создаёт настоящие JavaFX-снимки 41 состояния в `frontend/target/visual/javafx`.
 Для эталона и сравнения из корня (нужны Node.js + Playwright + Chrome, Python + Pillow):
@@ -255,4 +255,4 @@ DNS-правила ОС направляют только заданные до�
 их включение требует отдельной отметки в предпросмотре. Если удаление старого секрета
 не удалось, сохранение/удаление профиля не выдаётся за откат: UI сообщает частичный результат.
 
-Лицензии и состав поставки: [THIRD_PARTY_NOTICES.md](deploy/THIRD_PARTY_NOTICES.md).
+Лицензии и состав поставки: [THIRD_PARTY_NOTICES.md](build/THIRD_PARTY_NOTICES.md).

@@ -43,7 +43,7 @@ class LoopbackVpnIT {
   @BeforeEach
   void createFixtureCertificate() throws Exception {
     binary =
-        Path.of(System.getProperty("wisprail.engine", "../deploy/target/engine/sing-box.exe"))
+        Path.of(System.getProperty("wisprail.engine", "../build/target/engine/sing-box.exe"))
             .toAbsolutePath();
     assumeTrue(Files.isRegularFile(binary), "Pinned engine is required");
     Path store = directory.resolve("fixture.p12");

@@ -38,11 +38,11 @@ if ($Type -eq 'msi' -and $null -eq (Get-Command candle.exe -ErrorAction Silently
 Push-Location $repository
 try {
     $engine = Join-Path $PSScriptRoot 'target\engine\windows-x64'
-    & python deploy\fetch-engine.py --platform windows-amd64 --output $engine
+    & python build\fetch-engine.py --platform windows-amd64 --output $engine
     if ($LASTEXITCODE -ne 0) { throw 'Engine verification failed.' }
     & .\mvnw.cmd -B -ntp "-Dwisprail.engine=$engine\sing-box.exe" clean verify
     if ($LASTEXITCODE -ne 0) { throw 'Maven verification failed.' }
-    if (-not (Test-Path -LiteralPath (Join-Path $engine 'sing-box.exe'))) { throw 'Run deploy/fetch-engine.py --platform windows-amd64 first.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $engine 'sing-box.exe'))) { throw 'Run build/fetch-engine.py --platform windows-amd64 first.' }
     $output = $OutputDirectory
     if ([string]::IsNullOrWhiteSpace($output)) {
         $output = Join-Path $PSScriptRoot ('target\windows-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
@@ -55,7 +55,7 @@ try {
     Copy-Item -LiteralPath 'frontend\target\javafx' -Destination (Join-Path $inputDirectory 'javafx') -Recurse
     Copy-Item -LiteralPath $engine -Destination (Join-Path $inputDirectory 'engine') -Recurse
     Copy-Item -LiteralPath 'backend\src\main\resources\platform\windows-network.ps1' -Destination $inputDirectory
-    Copy-Item -LiteralPath 'deploy\windows\install-service.ps1', 'deploy\windows\uninstall-service.ps1', 'deploy\THIRD_PARTY_NOTICES.md' -Destination $inputDirectory
+    Copy-Item -LiteralPath 'build\windows\install-service.ps1', 'build\windows\uninstall-service.ps1', 'build\THIRD_PARTY_NOTICES.md' -Destination $inputDirectory
     $launcherProperties = Join-Path $output 'agent-launcher.properties'
     @("main-jar=wisprail-backend-$version.jar", 'main-class=app.wisprail.agent.AgentMain', 'win-console=false') | Set-Content -LiteralPath $launcherProperties -Encoding ASCII
     $runtime = Join-Path $output 'runtime'
@@ -98,7 +98,7 @@ try {
     }
     if ($Type -eq 'msi') {
         $resources = Join-Path $output 'installer-resources'
-        & python deploy\prepare-windows-installer.py --jdk $env:JAVA_HOME --output $resources
+        & python build\prepare-windows-installer.py --jdk $env:JAVA_HOME --output $resources
         if ($LASTEXITCODE -ne 0) { throw 'Installer service lifecycle configuration failed.' }
         & $jpackage --type msi --app-image $image --name Wisprail --app-version $packageVersion --vendor Wisprail --dest $output --install-dir Wisprail --resource-dir $resources --win-menu --win-shortcut --win-upgrade-uuid '5f37c318-b252-4acf-b5f1-559708172238'
         if ($LASTEXITCODE -ne 0) { throw 'MSI creation failed.' }

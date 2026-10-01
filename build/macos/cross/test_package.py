@@ -63,6 +63,11 @@ class PackageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Code page hash mismatch"):
             SIGNATURES.verify_binary(binary)
 
+    def test_wrong_architecture_is_rejected(self):
+        result = subprocess.run(["llvm-lipo", str(self.root / "arm64"), "-verify_arch", "x86_64"],
+                                capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_truncated_signature_is_rejected(self):
         binary = self.directory / "truncated"
         binary.write_bytes((self.root / "arm64").read_bytes()[:1024])
@@ -132,6 +137,13 @@ class DownloadTest(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError):
                 ENGINE.download("https://example.test/pinned")
             self.assertEqual(request.call_count, 1)
+
+    def test_retries_are_bounded_and_failure_is_preserved(self):
+        with patch.object(ENGINE.urllib.request, "urlopen", side_effect=TimeoutError()) as request:
+            with patch.object(ENGINE.time, "sleep"):
+                with self.assertRaises(TimeoutError):
+                    ENGINE.download("https://example.test/pinned")
+            self.assertEqual(request.call_count, 3)
 
 
 if __name__ == "__main__":

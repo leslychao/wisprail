@@ -30,7 +30,7 @@ VPN-сервер
 ```
 
 Стек: Java 21, JavaFX 21, Maven Wrapper. Два Maven-модуля: `backend/` и `frontend/`.
-Платформенная упаковка находится в `deploy/`. Spring, HTTP-бэкенд и БД не нужны.
+Платформенная упаковка находится в `build/`. Spring, HTTP-бэкенд и БД не нужны.
 
 Mac-дистрибутивы разрешено собирать на Linux через OSXCross и официальный Apple SDK.
 Кросс-сборка сохраняет Java 21, JavaFX, структуру `.app`, комплектный runtime и штатную

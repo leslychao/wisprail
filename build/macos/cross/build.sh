@@ -20,12 +20,12 @@ actual = hashlib.sha256('\n'.join(lines).encode()).hexdigest()
 if actual != sys.argv[1] or actual != manifest['sha256']:
     raise SystemExit('Source manifest identity mismatch')
 # Windows checkouts may use CRLF. Only shell inputs need a Linux execution copy.
-for path in [source / 'mvnw', *source.glob('deploy/**/*.sh')]:
+for path in [source / 'mvnw', *source.glob('build/**/*.sh')]:
     path.write_bytes(path.read_bytes().replace(b'\r\n', b'\n'))
 PY
 cd /work/source
-python3 -B deploy/macos/cross/test_package.py
-python3 deploy/fetch-engine.py --platform linux-amd64 --output /work/host-engine
+python3 -B build/macos/cross/test_package.py
+python3 build/fetch-engine.py --platform linux-amd64 --output /work/host-engine
 xvfb-run -a -s '-screen 0 1280x1024x24' sh ./mvnw -B -ntp \
     -Dmaven.repo.local=/maven -Djavafx.platform=linux -Dprism.order=sw \
     -Dwisprail.engine=/work/host-engine/sing-box clean verify
@@ -33,7 +33,7 @@ xvfb-run -a -s '-screen 0 1280x1024x24' sh ./mvnw -B -ntp \
 mkdir -p /result/checks/backend /result/checks/frontend
 cp -R backend/target/surefire-reports backend/target/failsafe-reports /result/checks/backend/
 cp -R frontend/target/surefire-reports /result/checks/frontend/
-sh deploy/package-macos.sh --cross --architecture "$architecture" \
+sh build/package-macos.sh --cross --architecture "$architecture" \
     --source-snapshot "$snapshot" --output /work/package
 # Keep .app, symlinks, chmod and PKG staging on Linux. Only completed archives cross NTFS.
 mkdir /result/package

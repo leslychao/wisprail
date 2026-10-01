@@ -4,8 +4,8 @@
     "sha256": "c94952432565db84f1b3a9e4ba3d44344b1464fcbeb8c7580ab9db1e7c22834a"
   },
   "bomutils": {
-    "url": "https://codeload.github.com/hogliux/bomutils/tar.gz/3f7dc2dbbc36ca1c957ec629970026f45594a52c",
-    "sha256": "1f0ed76b373f03cef4bd94253d5816b78b1764132b7965c05ce7a1b7deb06737"
+    "url": "https://codeload.github.com/hogliux/bomutils/tar.gz/c247002e2f49878bab32dd0fcf805810ae0992cb",
+    "sha256": "286e49560a3f84650b5a60ca0f22f775c0526aa4fb199db7a66f4d310378d4dd"
   },
   "sdk": {
     "url": "https://swcdn.apple.com/content/downloads/52/01/082-41241-A_0747ZN8FHV/dectd075r63pppkkzsb75qk61s0lfee22j/CLTools_macOSLMOS_SDK.pkg",

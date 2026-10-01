@@ -28,7 +28,7 @@
 
 ## Запуск Windows: установленная причина и повтор
 
-Исходный пакет `deploy/target/windows-20260930-135714/images/Wisprail` блокировался Windows Code
+Исходный пакет `build/target/windows-20260930-135714/images/Wisprail` блокировался Windows Code
 Integrity: 3033/3077, `VerifiedAndReputableDesktop`, status `0xc0e90002`, файл
 `runtime/bin/fontmanager.dll`. Открытое окно и exit 0 старого прогона не доказывали исправный запуск.
 Старое заключение «запуск PASS» этим расследованием уточнено.
@@ -43,9 +43,9 @@ JavaFX и JNA не были причиной воспроизведённой б
 оригиналами того же JDK; обязательны x64 PE, Valid vendor signatures и равенство SHA после копии.
 Нет отключения Code Integrity, подписи, TLS или политики выполнения; UI не получает admin token.
 
-Повтор нового распакованного ZIP: `deploy/verify-windows-zip.ps1`, доказательства
-[latest-windows.json](deploy/target/acceptance/latest-windows.json) и соответствующий
-`deploy/target/acceptance/windows-<timestamp>/` (окно, loaded-modules, Code Integrity, SHA архива).
+Повтор нового распакованного ZIP: `build/verify-windows-zip.ps1`, доказательства
+[latest-windows.json](build/target/acceptance/latest-windows.json) и соответствующий
+`build/target/acceptance/windows-<timestamp>/` (окно, loaded-modules, Code Integrity, SHA архива).
 Первый подтверждённый повтор: `windows-20260930-152827` — обычный пользователь, 77 Valid runtime
 DLL/EXE, загружены fontmanager/JavaFX/JNA, новых 3033/3077 нет, штатный exit 0, системная Java
 удалена из окружения дочернего процесса. Финальный повтор дополнительно использует новые
@@ -56,12 +56,24 @@ foreground отдельный screenshot=NOT_RUN; такой запуск не �
 ## Сборка и платформы
 
 Одна команда и окружения описаны в [README](README.md#zip-дистрибутивы-одним-запуском).
-[build-results.json](deploy/target/dist/build-results.json) содержит фактический buildId, версию,
-SHA-256 снимка и результаты платформ. При отсутствующем Mac Windows ZIP сохраняется, общий exit 1.
+[build-results.json](build/target/dist/build-results.json) содержит фактический buildId, версию,
+SHA-256 снимка и результаты платформ. Mac теперь не требуется для сборки: по умолчанию
+используется локальный Linux Docker. Любая ошибка обязательной платформы даёт общий exit 1
+и явный PARTIAL; проверка запуска на macOS остаётся отдельной.
+
+Кросс-сборка использует закреплённый официальный SDK 14.5, JDK 21.0.11, штатный JDK launcher
+и существующие служебные preinstall/postinstall. Developer ID/notarization не выполняются.
+Целостность ad-hoc подписей проверяется по CodeDirectory и CodeResources, отдельно от доверия
+Apple. Подтверждённая ошибка `rcodesign 0.29 verify` — попытка прочитать отсутствующий CMS у ad-hoc;
+она не скрыта и не засчитывается как PASS Apple `codesign`. В закреплённом bomutils исправлена
+инвертированная проверка дерева `Paths` (upstream 704739c), вызывавшая SIGSEGV reader; сохранено
+исправление переполнения writer b05cac6. Девять базовых и две дополнительные регрессии
+подписи/архивов/архитектуры/загрузок прошли: [package-tests.log](build/target/cross-research/package-tests.log).
+Полная упаковка создаёт `.app` внутри Linux, передавая на NTFS только ZIP, метаданные и отчёты.
 
 | Проверка | Результат / граница |
 |---|---|
-| Maven Wrapper clean verify, Java 21, `-Xlint:all -Werror` | 67 пройденных проверок (19 unit + 4 real-engine IT + 44 UI), 1 opt-in keyboard test пропущен. Лог финального запуска `deploy/target/build-distributions-final.log`; surefire/failsafe внутри каталога снимка |
+| Maven Wrapper clean verify, Java 21, `-Xlint:all -Werror` | 67 пройденных проверок (19 unit + 4 real-engine IT + 44 UI), 1 opt-in keyboard test пропущен. Лог финального запуска `build/target/build-distributions-final.log`; surefire/failsafe внутри каталога снимка |
 | CIDR/полный охват IPv4, suffix boundaries, импорт, секреты, ревизии/атомарность | Backend unit tests; реальные сетевые пути этим не подтверждаются |
 | Ошибка кандидата, switch token/revision, отмена, duplicate click, поздний ответ, cleanup failure | `ConnectionServiceTest`; fake runtime на границе владельца, не успешный VPN в приложении |
 | Реальный sing-box check/OpenVPN/VLESS TLS/Reality, версия/API | `SingboxConfigIT`, engine 1.14.2 |
@@ -69,11 +81,14 @@ SHA-256 снимка и результаты платформ. При отсут
 | JavaFX 41 состояния + поиск + два основных теста | `DesignScenariosTest` / `DesktopViewTest`; 44 проверки, без service IPC |
 | Обычный Windows ZIP + новый runtime | BUILT/PASS по metadata и `latest-windows.json` |
 | Windows PowerShell 5.1 команда из Run XML | BLOCKED до входа в скрипт: existing effective `Restricted`; защита не менялась |
-| Тот же build-distributions.ps1 из уже настроенного PowerShell 7 | Выполнен непосредственно, без IDE; отсутствие Mac возвращает exit 1 |
-| Текущие untracked исходники и содержимое ZIP | PASS: 97 файлов сверены с manifest, свежий JAR совпадает с ZIP, тестовый файл из старого target отсутствует, версии/хеши совпадают; `deploy/target/acceptance/distribution-content.json` |
-| Ошибка обязательной сборки и старый ZIP | PASS: намеренно отсутствующий JDK → Windows FAILED, общий exit 1, прежний ZIP удалён; `deploy/target/build-distributions-negative.json` |
-| macOS arm64 / x64 сборка и распаковка | NOT_RUN: Mac/разрешённые Mac SSH aliases отсутствуют; интеграция подготовлена |
-| Mac executable permissions/symlinks, Keychain, UDS, Service Management | NOT_RUN: нужен Mac; используется штатный ditto на стороне Mac |
+| Тот же build-distributions.ps1 из уже настроенного PowerShell 7 | Выполняется непосредственно, без IDE, Mac/SSH и публикации; итоговые статусы в `build-results.json`, лог кросс-сборки `build/target/cross-research/final-build.log` |
+| Текущие untracked исходники и содержимое ZIP | Manifest включает текущие файлы и инструменты Docker; актуальные количества, версии, SHA и сверка содержимого — `build/target/acceptance/distribution-content.json` |
+| Ошибка обязательной сборки и старый ZIP | PASS: намеренно отсутствующий JDK → Windows FAILED, общий exit 1, прежний ZIP удалён; `build/target/build-distributions-negative.json` |
+| macOS arm64 / x64 кросс-сборка и распаковка в Linux | Статус ZIP и SHA в `build-results.json`; при сборке проверяются все 47 Mach-O, payload PKG и ZIP, права, ссылки, совпадение снимка |
+| Порча Mach-O, Info.plist, ресурсов/ссылок; чужая архитектура; ошибки загрузки | PASS: 11 регрессий на реальных кросс-компилированных ARM/Intel бинарниках, включая отрицательные проверки; запускаются перед Maven |
+| Linux Maven clean verify | 66 PASS, Windows DPAPI и opt-in keyboard test пропущены; реальные loopback IT выполнены. Не является проверкой Mac JavaFX/сети; отчёты `builds/<buildId>/macos-<arch>/checks` |
+| Unix executable permissions/symlinks | Проверены упаковка и обратная распаковка в Linux. Распаковка Archive Utility на macOS — NOT_RUN |
+| Mac UI/Installer/Keychain/UDS/Service Management; Apple codesign/Gatekeeper | NOT_RUN: нет macOS; кросс-сборка не заявляет их успешное выполнение |
 | Установка/обновление/удаление службы Windows, UAC отказ/разрешение | NOT_RUN: служба не устанавливалась; нужны контролируемая административная сессия и допустимый политикой установщик |
 | Подписанный release MSI/PKG и notarization | NOT_RUN: нет signing identity/notary access, WiX/SDK и Mac; обычный ZIP их не требует |
 | Реальные TUN, NRPT/SystemConfiguration, соседний VPN, .local, сон/смена сети | NOT_RUN: нет контролируемого привилегированного VPN-стенда и целевых ресурсов |

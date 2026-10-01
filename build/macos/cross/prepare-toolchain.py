@@ -54,8 +54,15 @@ def main():
                        TARGET_DIR="/opt/osxcross", USE_SYSTEM_COMPILER="1")
     run("bash", "build.sh", cwd=osxcross, env=environment)
     bomutils = next((inputs / "bomutils").iterdir())
-    # Release 0.2 predates std::data; build it with its original C++ language generation.
-    run("make", "-j2", "CXX=g++ -std=c++11", cwd=bomutils)
+    # Upstream 704739c inverted this condition: non-tree variables caused a reader crash.
+    # Keep the later writer overflow fix (b05cac6); release 0.2 still has that overflow.
+    reader = bomutils / "src/lsbom.cpp"
+    original = reader.read_text()
+    broken = 'if (strstr(name.c_str(),"Paths") == 0)'
+    if original.count(broken) != 1:
+        raise RuntimeError("BOM reader patch no longer matches the pinned source")
+    reader.write_text(original.replace(broken, 'if (name == "Paths")'))
+    run("make", "-j2", cwd=bomutils)
     shutil.copy2(bomutils / "build/bin/mkbom", "/usr/local/bin/mkbom")
     shutil.copy2(bomutils / "build/bin/lsbom", "/usr/local/bin/lsbom")
     shutil.copy2(next((inputs / "rcodesign").rglob("rcodesign")), "/usr/local/bin/rcodesign")

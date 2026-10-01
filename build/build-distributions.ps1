@@ -21,8 +21,8 @@ function Get-SourceFiles {
     return @($paths | Sort-Object -Unique | Where-Object {
         $_ -match '^(pom\.xml|mvnw(\.cmd)?|README\.md|ACCEPTANCE\.md|sing-box_javafx_vpn_solution\.md|vpn_javafx_design_spec\.md|vpn_javafx_prototype\.html|vpn_javafx_main\.png)$' -or
         $_ -match '^\.mvn/' -or $_ -eq '.run/Build Distributions.run.xml' -or $_ -match '^(backend|frontend)/(pom\.xml|src/)' -or
-        ($_ -match '^deploy/' -and $_ -notmatch '/target/' -and ($_ -match '\.(ps1|sh|py|m|plist|md)$' -or $_ -match '/installer-scripts/(preinstall|postinstall)$')) -or
-        $_ -match '^deploy/macos/cross/(Dockerfile|inputs\.json)$'
+        ($_ -match '^build/' -and $_ -notmatch '/target/' -and ($_ -match '\.(ps1|sh|py|m|plist|md)$' -or $_ -match '/installer-scripts/(preinstall|postinstall)$')) -or
+        $_ -match '^build/macos/cross/(Dockerfile|inputs\.json)$'
     })
 }
 
@@ -43,7 +43,7 @@ function Invoke-MacCrossBuild([string]$Architecture, [string]$ArchiveName) {
         if ($LASTEXITCODE -ne 0 -or $engine -ne 'linux') {
             throw 'BLOCKED: Docker Linux engine is unavailable. Start Docker Desktop in Linux containers mode.'
         }
-        $context = Join-Path $source 'deploy\macos\cross'
+        $context = Join-Path $source 'build\macos\cross'
         $inputHashes = @('Dockerfile', 'inputs.json', 'fetch-inputs.py', 'prepare-toolchain.py') |
             ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $context $_)).Hash }
         $digest = [Security.Cryptography.SHA256]::Create()
@@ -65,7 +65,7 @@ function Invoke-MacCrossBuild([string]$Architecture, [string]$ArchiveName) {
         '--mount', "type=bind,source=$sourceArchive,target=/snapshot/source.tar,readonly",
         '--mount', "type=bind,source=$output,target=/result",
         '--mount', 'type=volume,source=wisprail-macos-maven,target=/maven',
-        '--mount', "type=bind,source=$source/deploy/macos/cross/build.sh,target=/build.sh,readonly",
+        '--mount', "type=bind,source=$source/build/macos/cross/build.sh,target=/build.sh,readonly",
         $script:crossImage, 'sh', '/build.sh', $Architecture, $sourceHash)
     & docker @arguments *> $log
     if ($LASTEXITCODE -ne 0) { throw "macOS $Architecture cross-build failed. See $log" }
@@ -85,7 +85,7 @@ function Invoke-MacBuild([string]$Architecture, [string]$SshHost, [string]$Archi
     & scp @sshOptions $sourceArchive "${SshHost}:$remote/source.tar"
     if ($LASTEXITCODE -ne 0) { throw 'Source snapshot transfer failed.' }
     $macArchitecture = if ($Architecture -eq 'arm64') { 'arm64' } else { 'x86_64' }
-    $command = 'cd ' + $remote + ' && test "$(shasum -a 256 source.tar | cut -d " " -f 1)" = ' + $sourceArchiveHash + ' && tar -xf source.tar && export JAVA_HOME=$(/usr/libexec/java_home -v 21.0.11 -a ' + $macArchitecture + ') && sh deploy/package-macos.sh --architecture ' + $Architecture + ' --source-snapshot ' + $sourceHash + ' --output ' + $remote + '/package'
+    $command = 'cd ' + $remote + ' && test "$(shasum -a 256 source.tar | cut -d " " -f 1)" = ' + $sourceArchiveHash + ' && tar -xf source.tar && export JAVA_HOME=$(/usr/libexec/java_home -v 21.0.11 -a ' + $macArchitecture + ') && sh build/package-macos.sh --architecture ' + $Architecture + ' --source-snapshot ' + $sourceHash + ' --output ' + $remote + '/package'
     & ssh @sshOptions $SshHost $command
     if ($LASTEXITCODE -ne 0) { throw "macOS $Architecture packaging failed; logs and source remain in $remote." }
     & scp @sshOptions "${SshHost}:$remote/package/$ArchiveName" (Join-Path $dist ($ArchiveName + '.partial'))
@@ -152,7 +152,7 @@ try {
         try {
             if ($target.platform -eq 'windows') {
                 $packageOutput = Join-Path $work 'windows-x64'
-                & $powershell -NoProfile -File (Join-Path $source 'deploy\package-windows.ps1') -OutputDirectory $packageOutput -SourceSnapshot $sourceHash
+                & $powershell -NoProfile -File (Join-Path $source 'build\package-windows.ps1') -OutputDirectory $packageOutput -SourceSnapshot $sourceHash
                 if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed.' }
                 Copy-Item -LiteralPath (Join-Path $packageOutput $archiveName) -Destination (Join-Path $dist ($archiveName + '.partial'))
                 Move-Item -LiteralPath (Join-Path $dist ($archiveName + '.partial')) -Destination (Join-Path $dist $archiveName)
