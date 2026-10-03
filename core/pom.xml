@@ -6,7 +6,7 @@
     <artifactId>wisprail</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <artifactId>wisprail-backend</artifactId>
+  <artifactId>wisprail-core</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>

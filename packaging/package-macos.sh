@@ -35,24 +35,24 @@ grep -q 'JAVA_VERSION="21.0.11"' "$JAVA_HOME/release"
 grep -q "OS_ARCH=\"$java_arch\"" "$JAVA_HOME/release"
 version=$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("pom.xml").findtext("{*}version"))')
 package_version=${version%%-*}
-engine="$repository/build/target/engine/macos-$architecture"
-python3 build/fetch-engine.py --platform "$engine_platform" --output "$engine"
+engine="$repository/packaging/target/engine/macos-$architecture"
+python3 packaging/fetch-engine.py --platform "$engine_platform" --output "$engine"
 sh ./mvnw -B -ntp -Djavafx.platform="$javafx_platform" -Dwisprail.engine="$engine/sing-box" clean verify
-if [ -z "$output" ]; then output="$repository/build/target/macos-$architecture-$(date +%Y%m%d-%H%M%S)"; fi
+if [ -z "$output" ]; then output="$repository/packaging/target/macos-$architecture-$(date +%Y%m%d-%H%M%S)"; fi
 if [ -e "$output" ]; then echo 'Packaging output must be a new directory.' >&2; exit 1; fi
 input="$output/input"
 mkdir -p "$input"
-cp "frontend/target/wisprail-desktop-$version.jar" "$input/"
-for jar in frontend/target/lib/*.jar; do
+cp "desktop/target/wisprail-desktop-$version.jar" "$input/"
+for jar in desktop/target/lib/*.jar; do
     case "$jar" in */javafx-*) continue;; esac
     cp "$jar" "$input/"
 done
-cp -R frontend/target/javafx "$input/javafx"
+cp -R desktop/target/javafx "$input/javafx"
 cp -R "$engine" "$input/engine"
-cp build/THIRD_PARTY_NOTICES.md "$input/"
+cp packaging/THIRD_PARTY_NOTICES.md "$input/"
 test -f "$input/engine/sing-box"
 chmod 755 "$input/engine/sing-box"
-printf '%s\n' "main-jar=wisprail-backend-$version.jar" 'main-class=app.wisprail.agent.AgentMain' > "$output/agent.properties"
+printf '%s\n' "main-jar=wisprail-core-$version.jar" 'main-class=app.wisprail.agent.AgentMain' > "$output/agent.properties"
 "$JAVA_HOME/bin/jlink" --add-modules java.base,java.desktop,java.logging,java.naming,java.net.http,java.security.jgss,java.xml,jdk.crypto.ec,jdk.unsupported,jdk.net,jdk.management --strip-debug --no-header-files --no-man-pages --output "$output/runtime"
 "$JAVA_HOME/bin/jpackage" --type app-image --name Wisprail --app-version "$package_version" --vendor Wisprail --input "$input" --dest "$output" --main-jar "wisprail-desktop-$version.jar" --main-class app.wisprail.ui.DesktopLauncher --runtime-image "$output/runtime" --add-launcher "WisprailAgent=$output/agent.properties" --mac-package-identifier app.wisprail --java-options '-Dfile.encoding=UTF-8' --java-options '--module-path=$APPDIR/javafx' --java-options '--add-modules=javafx.controls' --java-options '-Djava.library.path=$APPDIR/../Frameworks' --java-options '-Djna.boot.library.path=$APPDIR/../Frameworks'
 app="$output/Wisprail.app"
@@ -65,11 +65,11 @@ for jar in "$input"/javafx/javafx-graphics-*.jar; do
 done
 clang_arch=$architecture
 if [ "$architecture" = x64 ]; then clang_arch=x86_64; fi
-xcrun clang -arch "$clang_arch" -dynamiclib -fobjc-arc -mmacosx-version-min=13.0 -framework Foundation -framework ServiceManagement build/macos/services.m -o "$app/Contents/Frameworks/libwisprail.dylib"
-cp build/macos/app.wisprail.agent.plist "$app/Contents/Library/LaunchDaemons/"
+xcrun clang -arch "$clang_arch" -dynamiclib -fobjc-arc -mmacosx-version-min=13.0 -framework Foundation -framework ServiceManagement packaging/macos/services.m -o "$app/Contents/Frameworks/libwisprail.dylib"
+cp packaging/macos/app.wisprail.agent.plist "$app/Contents/Library/LaunchDaemons/"
 # The user identity is written by the root installer, outside the signed application bundle.
 if $release; then
-    set -- --force --timestamp --options runtime --entitlements build/macos/entitlements.plist --sign "$WISPRAIL_APP_SIGN_IDENTITY"
+    set -- --force --timestamp --options runtime --entitlements packaging/macos/entitlements.plist --sign "$WISPRAIL_APP_SIGN_IDENTITY"
 else
     # Local ad-hoc signing needs no identity and makes no Gatekeeper/notarization claim.
     set -- --force --sign -
@@ -85,7 +85,7 @@ codesign "$@" "$app"
 codesign --verify --deep --strict "$app"
 mkdir -p "$output/root/Applications"
 cp -R "$app" "$output/root/Applications/"
-cp -R build/macos/installer-scripts "$output/scripts"
+cp -R packaging/macos/installer-scripts "$output/scripts"
 chmod 755 "$output/scripts/preinstall" "$output/scripts/postinstall"
 set -- --root "$output/root" --scripts "$output/scripts" --identifier app.wisprail --version "$package_version" --install-location /
 if $release; then set -- "$@" --sign "$WISPRAIL_INSTALLER_SIGN_IDENTITY"; fi
@@ -97,7 +97,7 @@ fi
 distribution="$output/distribution/Wisprail"
 mkdir -p "$distribution"
 ditto "$app" "$distribution/Wisprail.app"
-cp "$output/Wisprail.pkg" build/THIRD_PARTY_NOTICES.md "$distribution/"
+cp "$output/Wisprail.pkg" packaging/THIRD_PARTY_NOTICES.md "$distribution/"
 python3 - "$distribution/build-info.json" "$version" "$architecture" "$snapshot" "$release" <<'PY'
 import json, pathlib, sys
 path, version, architecture, snapshot, release = sys.argv[1:]

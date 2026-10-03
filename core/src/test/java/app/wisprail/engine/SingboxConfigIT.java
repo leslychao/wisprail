@@ -117,7 +117,7 @@ class SingboxConfigIT {
 
   private static Path binary() {
     Path path =
-        Path.of(System.getProperty("wisprail.engine", "../build/target/engine/sing-box.exe"))
+        Path.of(System.getProperty("wisprail.engine", "../packaging/target/engine/sing-box.exe"))
             .toAbsolutePath();
     assumeTrue(Files.isRegularFile(path), "Download pinned engine before integration tests");
     return path;

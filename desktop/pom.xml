@@ -47,7 +47,7 @@
   <dependencies>
     <dependency>
       <groupId>app.wisprail</groupId>
-      <artifactId>wisprail-backend</artifactId>
+      <artifactId>wisprail-core</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

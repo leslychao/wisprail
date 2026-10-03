@@ -1,7 +1,7 @@
 # Wisprail: JavaFX и sing-box
 
 Канонические требования первого выпуска, согласованные 30 сентября 2026 года.
-Дизайн: [vpn_javafx_design_spec.md](vpn_javafx_design_spec.md). HTML и PNG — ориентиры интерфейса,
+Дизайн: [specification.md](design/specification.md). HTML и PNG — ориентиры интерфейса,
 а не доказательство реализации. Готовность Windows и macOS подтверждается отдельно.
 
 ## Назначение и границы
@@ -29,8 +29,8 @@ sing-box 1.14.2
 VPN-сервер
 ```
 
-Стек: Java 21, JavaFX 21, Maven Wrapper. Два Maven-модуля: `backend/` и `frontend/`.
-Платформенная упаковка находится в `build/`. Spring, HTTP-бэкенд и БД не нужны.
+Стек: Java 21, JavaFX 21, Maven Wrapper. Два Maven-модуля: `core/` и `desktop/`.
+Платформенная упаковка находится в `packaging/`. Spring, HTTP-бэкенд и БД не нужны.
 
 Mac-дистрибутивы разрешено собирать на Linux через OSXCross и официальный Apple SDK.
 Кросс-сборка сохраняет Java 21, JavaFX, структуру `.app`, комплектный runtime и штатную

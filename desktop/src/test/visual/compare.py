@@ -1,7 +1,7 @@
 """Compare equal client areas; metrics locate differences, not certify acceptance.
 
 Run from the repository root after DesignScenariosTest and capture-reference.cjs.
-Requires Pillow. All outputs stay under frontend/target/visual.
+Requires Pillow. All outputs stay under desktop/target/visual.
 """
 
 import html
@@ -12,7 +12,7 @@ from PIL import Image, ImageChops, ImageEnhance, ImageStat
 
 
 def main():
-    directory = Path("frontend/target/visual")
+    directory = Path("desktop/target/visual")
     scenarios = json.loads((directory / "scenarios.json").read_text(encoding="utf8"))
     output = directory / "comparison"
     output.mkdir(parents=True, exist_ok=True)
@@ -50,7 +50,7 @@ def main():
         'Диалоги JavaFX наложены по фактическим координатам их окон. '
         'Метрики включают текст и растеризацию; порога автоматической приёмки нет. '
         'Сетевые состояния заданы только тестовыми фикстурами. '
-        'Результаты и ограничения каждого сценария: ACCEPTANCE.md.</p>'
+        'Результаты и ограничения каждого сценария: docs/acceptance.md.</p>'
         + "\n".join(cards) + '</html>', encoding="utf8")
     print(f"Compared {len(metrics)} scenarios; {output / 'index.html'}")
 

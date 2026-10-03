@@ -59,15 +59,15 @@ def assemble_app(repository, output, architecture, version):
     appdir = contents / "app"
     for name in ("app/javafx", "MacOS", "Resources", "Frameworks", "Library/LaunchDaemons"):
         (contents / name).mkdir(parents=True, exist_ok=True)
-    desktop = repository / "frontend/target"
+    desktop = repository / "desktop/target"
     shutil.copy2(desktop / f"wisprail-desktop-{version}.jar", appdir)
     for library in sorted((desktop / "lib").glob("*.jar")):
         shutil.copy2(library, appdir)
     shutil.copytree(desktop / "javafx", appdir / "javafx", dirs_exist_ok=True)
-    run("python3", repository / "build/fetch-engine.py", "--platform", engine_platform,
+    run("python3", repository / "packaging/fetch-engine.py", "--platform", engine_platform,
         "--output", appdir / "engine")
-    shutil.copy2(repository / "build/THIRD_PARTY_NOTICES.md", appdir)
-    shutil.copy2(repository / "build/THIRD_PARTY_NOTICES.md", distribution)
+    shutil.copy2(repository / "packaging/THIRD_PARTY_NOTICES.md", appdir)
+    shutil.copy2(repository / "packaging/THIRD_PARTY_NOTICES.md", distribution)
     shutil.copytree(jdk / "legal/jdk.jpackage", appdir / "licenses/jdk.jpackage")
     runtime = contents / "runtime/Contents/Home"
     run("/opt/java/bin/jlink", "--module-path", jdk / "jmods", "--add-modules", MODULES,
@@ -116,9 +116,9 @@ def assemble_app(repository, output, architecture, version):
     native_arch = "arm64" if architecture == "arm64" else "x86_64"
     run(f"{native_arch}-apple-darwin23.5-clang", "-dynamiclib", "-fobjc-arc",
         "-mmacosx-version-min=13.0", "-framework", "Foundation", "-framework", "ServiceManagement",
-        "-Wl,-install_name,@rpath/libwisprail.dylib", repository / "build/macos/services.m",
+        "-Wl,-install_name,@rpath/libwisprail.dylib", repository / "packaging/macos/services.m",
         "-o", contents / "Frameworks/libwisprail.dylib")
-    shutil.copy2(repository / "build/macos/app.wisprail.agent.plist",
+    shutil.copy2(repository / "packaging/macos/app.wisprail.agent.plist",
                  contents / "Library/LaunchDaemons")
     run("rcodesign", "sign", app)
     # The signature changes engine bytes. Seal its final digest without re-signing nested code.
@@ -148,7 +148,7 @@ def build_pkg(repository, app, output, version):
     scripts.mkdir()
     for name in ("preinstall", "postinstall"):
         target = scripts / name
-        target.write_bytes((repository / "build/macos/installer-scripts" / name)
+        target.write_bytes((repository / "packaging/macos/installer-scripts" / name)
                            .read_bytes().replace(b"\r\n", b"\n"))
         target.chmod(0o755)
     make_cpio(scripts, package / "Scripts")
