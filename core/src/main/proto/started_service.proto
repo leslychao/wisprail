@@ -1,0 +1,49 @@
+// Wire-compatible projection of SagerNet/sing-box v1.14.2
+// daemon/started_service.proto (af6e64c3b69e6132ebaee0e1a3d24e93903f6709).
+// Only the read-only RPCs used by Wisprail are generated. Names, field numbers
+// and types are unchanged; unrelated USB descriptor fields cannot be compiled
+// by Java protoc because they collide with getDescriptor().
+syntax = "proto3";
+package daemon;
+import "google/protobuf/empty.proto";
+service StartedService {
+  rpc GetVersion(google.protobuf.Empty) returns (Version) {}
+  rpc SubscribeOpenVPNStatus(google.protobuf.Empty) returns (stream OpenVPNStatusUpdate) {}
+}
+message Version {
+  string version = 1;
+  int32 apiVersion = 2;
+}
+message OpenVPNStatusUpdate {
+  repeated OpenVPNEndpointStatus endpoints = 1;
+}
+message OpenVPNEndpointStatus {
+  string endpointTag = 1;
+  string state = 2;
+  string stateText = 3;
+  OpenVPNChallenge challenge = 4;
+  string error = 5;
+  OpenVPNTunnelInfo tunnelInfo = 6;
+}
+message OpenVPNTunnelInfo {
+  string server = 1;
+  reserved 2;
+  string network = 3;
+  repeated string ipv4 = 4;
+  repeated string ipv6 = 5;
+  repeated string dns = 6;
+  uint32 mtu = 7;
+  int64 connectedSince = 8;
+  string cipher = 9;
+}
+message OpenVPNChallenge {
+  string id = 1;
+  string kind = 2;
+  string username = 3;
+  string message = 4;
+  string url = 5;
+  string secretMessage = 6;
+  bool echo = 7;
+  string previousError = 8;
+  int64 deadline = 9;
+}
