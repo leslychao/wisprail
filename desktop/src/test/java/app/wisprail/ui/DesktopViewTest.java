@@ -745,6 +745,8 @@ class DesktopViewTest {
                       assertTrue(
                           choice.getWidth() >= choice.prefWidth(-1) - 1,
                           "Dialog action must keep its full label: " + choice.getText());
+                      Text rendered = Text.class.cast(choice.lookup(".text"));
+                      assertEquals(choice.getText(), rendered.getText());
                       assertInsideScene(choice);
                     });
             button(preview.getScene().getRoot(), "Сохранить и подключить").fire();

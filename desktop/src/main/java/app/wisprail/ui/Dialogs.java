@@ -46,7 +46,7 @@ final class Dialogs {
       results.put(type, choice.value());
       Button button = (Button) dialog.getDialogPane().lookupButton(type);
       button.setDefaultButton(false);
-      button.setMinWidth(Region.USE_PREF_SIZE);
+      ButtonBar.setButtonUniformSize(button, false);
       if (choice.destructive()) {
         button.getStyleClass().add("danger");
       }
@@ -60,12 +60,17 @@ final class Dialogs {
     }
     DialogPane pane = dialog.getDialogPane();
     pane.applyCss();
+    // ButtonBar resets button minima when creating its skin.
+    for (ButtonType type : results.keySet()) {
+      ((Button) pane.lookupButton(type)).setMinWidth(Region.USE_PREF_SIZE);
+    }
     ButtonBar footer = (ButtonBar) pane.lookup(".button-bar");
-    double footerWidth =
-        footer.prefWidth(-1) + pane.getInsets().getLeft() + pane.getInsets().getRight();
+    double horizontalInsets = pane.getInsets().getLeft() + pane.getInsets().getRight();
+    double footerWidth = footer.prefWidth(-1) + horizontalInsets;
     pane.setMinWidth(footerWidth);
     pane.setPrefWidth(Math.max(pane.getPrefWidth(), footerWidth));
-    pane.setPrefHeight(pane.prefHeight(pane.getPrefWidth()));
+    // DialogPane measures content before subtracting its padding from the allocated width.
+    pane.setPrefHeight(pane.prefHeight(pane.getPrefWidth() - horizontalInsets));
     dialog.setResultConverter(results::get);
     return dialog.showAndWait();
   }

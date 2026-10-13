@@ -25,7 +25,6 @@ final class Ui {
     Label label = new Label(text);
     label.getStyleClass().add(style);
     label.setWrapText(true);
-    label.setMinHeight(Region.USE_PREF_SIZE);
     return label;
   }
 
