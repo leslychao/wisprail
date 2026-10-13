@@ -153,7 +153,7 @@ final class ReadinessProbe {
     if (resolved.isEmpty()
         || resolved.stream()
             .anyMatch(
-                address -> networks.stream().noneMatch(network -> network.contains(address)))) {
+                address -> networks.stream().noneMatch(cidr -> cidr.contains(address)))) {
       throw new IOException("Ресурс проверки разрешается вне выбранных IPv4-сетей");
     }
     List<Ipv4Cidr> exclusions = network.routeExclusions().stream().map(Ipv4Cidr::parse).toList();

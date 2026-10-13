@@ -550,12 +550,18 @@ final class ProfileEditor extends BorderPane {
 
   private void dnsFields() {
     if (fullTunnel()) {
+      if (original.fullTunnel() && !original.dns().isBlank()) {
+        form.getChildren()
+            .add(
+                Ui.field(
+                    "DNS-сервер этого VPN",
+                    dns,
+                    "Один IPv4-адрес. Оставьте пустым для автоматического DNS через VPN."));
+      }
       form.getChildren()
           .add(
               Ui.notice(
-                  (original.fullTunnel() && !dns.getText().isBlank()
-                          ? "DNS " + dns.getText().trim() + " используется через VPN. "
-                          : "DNS-запросы направляются через VPN автоматически. ")
+                  "DNS-запросы направляются через VPN. "
                       + "Корпоративный DNS и список доменов не требуются.",
                   "information"));
       return;

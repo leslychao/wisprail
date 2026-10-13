@@ -65,12 +65,12 @@ class SystemNetworkPlatformTest {
         SystemNetworkPlatform.prepare(
             profile(Profile.FULL_TUNNEL_NETWORKS, List.of()),
             UUID.randomUUID(),
-            List.of("89.125.210.180"),
+            List.of("192.0.2.10"),
             snapshot);
 
     assertEquals("198.18.0.9/30", plan.tunCidr());
     assertEquals("fdfe:dcba:9876:2::1/126", plan.tunIpv6Cidr());
-    assertEquals(List.of("89.125.210.180/32"), plan.routeExclusions());
+    assertEquals(List.of("192.0.2.10/32"), plan.routeExclusions());
   }
 
   @Test
@@ -227,7 +227,7 @@ class SystemNetworkPlatformTest {
         UUID.randomUUID(),
         0,
         "VPN",
-        "89.125.210.180",
+        "192.0.2.10",
         8443,
         VlessSettings.defaults(),
         networks,

@@ -21,6 +21,7 @@ import app.wisprail.profile.Profile;
 import app.wisprail.profile.ProfileImporter;
 import app.wisprail.profile.ProfileRepository;
 import app.wisprail.profile.ProfileSecrets;
+import app.wisprail.profile.ProfileValidator;
 import app.wisprail.profile.TlsMode;
 import app.wisprail.profile.VlessSettings;
 import app.wisprail.profile.VpnType;
@@ -81,6 +82,7 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.robot.Robot;
+import javafx.scene.text.Text;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 import javax.imageio.ImageIO;
@@ -736,6 +738,15 @@ class DesktopViewTest {
             assertFalse(displayed.contains("00000000-0000-4000-8000-000000000001"));
             assertEquals(0, gateway.connects);
             capture(preview, "import-full-tunnel");
+            assertWrappedLabelsReadable(preview.getScene().getRoot());
+            buttons(preview.getScene().getRoot())
+                .forEach(
+                    choice -> {
+                      assertTrue(
+                          choice.getWidth() >= choice.prefWidth(-1) - 1,
+                          "Dialog action must keep its full label: " + choice.getText());
+                      assertInsideScene(choice);
+                    });
             button(preview.getScene().getRoot(), "Сохранить и подключить").fire();
             return null;
           });
@@ -755,6 +766,14 @@ class DesktopViewTest {
             assertFalse(text(stage.getScene().getRoot()).contains("Сети через VPN"));
             assertTrue(text(stage.getScene().getRoot()).contains("Весь интернет"));
             capture(stage, "full-tunnel-connection");
+            ConnectionSnapshot active = connected(saved);
+            assertEquals("Подключён · весь интернет через VPN", TrayController.stateText(active));
+            TrayController tray = field(main, "tray", TrayController.class);
+            tray.update(active, List.of(saved));
+            Parent panel = (Parent) invoke(tray, "panel", new Class<?>[0]);
+            show(panel, 326, 480);
+            assertTrue(text(panel).contains("Подключён · весь интернет через VPN"));
+            capture(stage, "full-tunnel-tray");
             return null;
           });
     } finally {
@@ -808,11 +827,19 @@ class DesktopViewTest {
                   "https://example.com/health",
                   selective.secretRef());
           ProfileEditor fullEditor = editor(full, new AtomicInteger());
+          show(fullEditor, 1070, 700);
           assertEquals(full, fullEditor.draft().profile());
           assertFalse(fullEditor.isDirty());
           fullEditor.showError("healthUrl", "Проверьте HTTPS-ресурс");
           assertTrue(field(fullEditor, "healthUrl", TextField.class).getParent().isVisible());
           assertTrue(field(fullEditor, "connectionParameters", TitledPane.class).isExpanded());
+          fullEditor.showError("dns", "Проверьте DNS-сервер");
+          TextField fullDns = field(fullEditor, "dns", TextField.class);
+          assertTrue(fullDns.isEditable());
+          assertTrue(nodes(fullEditor).anyMatch(node -> node == fullDns));
+          fullDns.clear();
+          assertEquals("", fullEditor.draft().profile().dns());
+          assertTrue(ProfileValidator.validateProfile(fullEditor.draft().profile()).isEmpty());
           return null;
         });
   }
@@ -1633,6 +1660,7 @@ class DesktopViewTest {
     fx(
         () -> {
           capture(opened, name);
+          assertWrappedLabelsReadable(opened.getScene().getRoot());
           List<Button> destructive =
               buttons(opened.getScene().getRoot())
                   .filter(button -> button.getStyleClass().contains("danger"))
@@ -1647,6 +1675,22 @@ class DesktopViewTest {
           return null;
         });
     finished.get(10, TimeUnit.SECONDS);
+  }
+
+  private static void assertWrappedLabelsReadable(Parent content) {
+    nodes(content)
+        .filter(Label.class::isInstance)
+        .map(Label.class::cast)
+        .filter(label -> label.isWrapText() && label.isVisible() && !label.getText().isEmpty())
+        .forEach(
+            label -> {
+              assertTrue(
+                  label.getHeight() >= label.prefHeight(label.getWidth()) - 1,
+                  "Wrapped dialog text must keep its natural height: " + label.getText());
+              Node rendered = label.lookup(".text");
+              assertTrue(rendered instanceof Text, "The label must render its text");
+              assertEquals(label.getText(), Text.class.cast(rendered).getText());
+            });
   }
 
   private static Window awaitDialog(String title) throws Exception {

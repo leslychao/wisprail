@@ -219,7 +219,10 @@ final class TrayController implements AutoCloseable {
     return switch (snapshot.state()) {
       case DISCONNECTED -> "Не подключён";
       case CONNECTING -> "Подключение…";
-      case CONNECTED -> "Подключён для выбранных сетей";
+      case CONNECTED ->
+          snapshot.activeProfile() != null && snapshot.activeProfile().fullTunnel()
+              ? "Подключён · весь интернет через VPN"
+              : "Подключён для выбранных сетей";
       case DISCONNECTING -> "Отключение…";
       case ERROR -> "Ошибка подключения";
     };

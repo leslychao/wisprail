@@ -10,7 +10,9 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
@@ -44,6 +46,7 @@ final class Dialogs {
       results.put(type, choice.value());
       Button button = (Button) dialog.getDialogPane().lookupButton(type);
       button.setDefaultButton(false);
+      button.setMinWidth(Region.USE_PREF_SIZE);
       if (choice.destructive()) {
         button.getStyleClass().add("danger");
       }
@@ -55,6 +58,14 @@ final class Dialogs {
       Button initialFocus = cancel;
       dialog.setOnShown(event -> Platform.runLater(initialFocus::requestFocus));
     }
+    DialogPane pane = dialog.getDialogPane();
+    pane.applyCss();
+    ButtonBar footer = (ButtonBar) pane.lookup(".button-bar");
+    double footerWidth =
+        footer.prefWidth(-1) + pane.getInsets().getLeft() + pane.getInsets().getRight();
+    pane.setMinWidth(footerWidth);
+    pane.setPrefWidth(Math.max(pane.getPrefWidth(), footerWidth));
+    pane.setPrefHeight(pane.prefHeight(pane.getPrefWidth()));
     dialog.setResultConverter(results::get);
     return dialog.showAndWait();
   }
