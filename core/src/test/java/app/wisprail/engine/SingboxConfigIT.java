@@ -51,7 +51,7 @@ class SingboxConfigIT {
     EngineCredentials credentials = EngineCredentials.create();
     String uuid = UUID.randomUUID().toString();
     int vlessPort = availablePort();
-    int dnsPort = availablePort();
+    int dnsPort = availableUdpPort();
     try (var executor = Executors.newVirtualThreadPerTaskExecutor();
         DatagramSocket dns = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
       dns.setSoTimeout(500);
@@ -192,6 +192,12 @@ class SingboxConfigIT {
 
   private static int availablePort() throws IOException {
     try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+      return socket.getLocalPort();
+    }
+  }
+
+  private static int availableUdpPort() throws IOException {
+    try (DatagramSocket socket = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
       return socket.getLocalPort();
     }
   }

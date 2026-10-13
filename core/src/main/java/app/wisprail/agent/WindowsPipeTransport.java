@@ -30,8 +30,11 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public final class WindowsPipeTransport {
   public static final String SERVICE_NAME = "WisprailAgent";
   public static final String PIPE_NAME = "\\\\.\\pipe\\Wisprail.Agent.v1";
-  private static final int FILE_READ_DATA = 0x0001;
-  private static final int FILE_WRITE_DATA = 0x0002;
+  private static final int CLIENT_ACCESS =
+      WinNT.FILE_READ_DATA
+          | WinNT.FILE_WRITE_DATA
+          | WinNT.FILE_READ_ATTRIBUTES
+          | WinNT.SYNCHRONIZE;
   private static final int SECURITY_SQOS_PRESENT = 0x00100000;
   private static final int SECURITY_IDENTIFICATION = 0x00010000;
 
@@ -86,7 +89,7 @@ public final class WindowsPipeTransport {
     HANDLE pipe =
         Kernel32.INSTANCE.CreateFile(
             PIPE_NAME,
-            FILE_READ_DATA | FILE_WRITE_DATA,
+            CLIENT_ACCESS,
             0,
             null,
             WinNT.OPEN_EXISTING,
@@ -144,8 +147,9 @@ public final class WindowsPipeTransport {
         throw new IOException("Служба остановлена");
       }
       PointerByReference descriptor = new PointerByReference();
-      // Clients get read/write data only, never FILE_CREATE_PIPE_INSTANCE.
-      String sddl = "O:SYG:SYD:P(A;;GA;;;SY)(A;;0x00100003;;;" + owner + ")";
+      // CreateFile requires read attributes even for data-only access; no pipe creation is granted.
+      String sddl =
+          "O:SYG:SYD:P(A;;GA;;;SY)(A;;0x" + Integer.toHexString(CLIENT_ACCESS) + ";;;" + owner + ")";
       if (!SecurityApi.INSTANCE.ConvertStringSecurityDescriptorToSecurityDescriptorW(
           new WString(sddl), 1, descriptor, null)) {
         throw failure("Не удалось создать защищённый IPC");
@@ -314,6 +318,8 @@ public final class WindowsPipeTransport {
       throw failure("Не удалось создать событие IPC");
     }
     result.write();
+    // Windows owns completion fields after I/O starts; JNA must not overwrite them on later calls.
+    result.setAutoWrite(false);
     return result;
   }
 

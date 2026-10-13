@@ -152,22 +152,17 @@ function Test-EmptyDirectory([string]$Path) {
 function Initialize-ServiceState {
     foreach ($directory in @($stateParent, $state)) {
         Assert-NoReparse $directory
-        if (-not (Test-Path -LiteralPath $directory)) {
-            # ProgramData grants inherited user write access; apply protection at creation.
-            [IO.Directory]::CreateDirectory($directory, (New-SystemAcl $true)) | Out-Null
-        }
-        Get-TrustedOwnerAcl $directory | Out-Null
-        if (Test-EmptyDirectory $directory) {
-            # A prior failed bootstrap can leave an empty, administrator-owned directory.
-            Set-SystemAcl $directory $true
-            if (-not (Test-EmptyDirectory $directory)) {
-                throw 'Содержимое системного каталога изменилось во время подготовки.'
+        if (Test-Path -LiteralPath $directory) {
+            Get-TrustedOwnerAcl $directory | Out-Null
+            if (Test-EmptyDirectory $directory) {
+                # Never apply elevated ACLs to a writable remnant; remove only the empty object.
+                [IO.Directory]::Delete($directory, $false)
             }
-            Assert-TrustedObject $directory
-        } else {
-            Assert-TrustedObject $directory
-            Set-SystemAcl $directory $true
         }
+        # .NET applies protection only at creation; a raced existing path must pass full trust.
+        [IO.Directory]::CreateDirectory($directory, (New-SystemAcl $true)) | Out-Null
+        Assert-TrustedObject $directory
+        Set-SystemAcl $directory $true
     }
     foreach ($file in @($ownerFile, $transactionFile, $removeJournal)) {
         if (Test-Path -LiteralPath $file) { Assert-TrustedObject $file }
