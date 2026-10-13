@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import app.wisprail.storage.JsonCodec;
+import com.google.gson.JsonElement;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -79,6 +80,54 @@ class ProfileValidationTest {
     assertTrue(
         ProfileValidator.validate(noProbe, ProfileFixtures.secrets()).stream()
             .anyMatch(issue -> issue.field().equals("healthUrl")));
+  }
+
+  @Test
+  void fullVlessNeedsNoManualDnsButKeepsAccessAndRoutingValidation() {
+    Profile selected = ProfileFixtures.vless("VPN");
+    Profile full = withNetworks(selected, List.of("0.0.0.0/0"));
+    assertTrue(full.fullTunnel());
+    assertTrue(ProfileValidator.validate(full, ProfileFixtures.secrets()).isEmpty());
+    assertTrue(
+        ProfileValidator.validate(full, ProfileSecrets.empty()).stream()
+            .anyMatch(issue -> issue.field().equals("uuid")));
+    for (List<String> networks :
+        List.of(
+            List.<String>of(),
+            List.of("0.0.0.0/1", "128.0.0.0/1"),
+            List.of("0.0.0.0/0", "10.0.0.0/8"))) {
+      assertTrue(
+          ProfileValidator.validate(withNetworks(selected, networks), ProfileFixtures.secrets())
+              .stream()
+              .anyMatch(issue -> issue.field().equals("networks")));
+    }
+  }
+
+  @Test
+  void fullInternetSurvivesCanonicalSecretFreeProfileDocument() {
+    Profile full = withNetworks(ProfileFixtures.vless("VPN"), List.of("0.0.0.0/0"));
+    String json = JsonCodec.gson().toJson(new ProfileDocument(full));
+    Profile restored =
+        JsonCodec.readProfileDocument(JsonCodec.gson().fromJson(json, JsonElement.class))
+            .profile();
+    assertEquals(full, restored);
+    assertTrue(restored.fullTunnel());
+    assertTrue(ProfileValidator.validate(restored, ProfileFixtures.secrets()).isEmpty());
+  }
+
+  private static Profile withNetworks(Profile source, List<String> networks) {
+    return new Profile(
+        source.id(),
+        source.revision(),
+        source.name(),
+        source.server(),
+        source.port(),
+        source.settings(),
+        networks,
+        "",
+        List.of(),
+        "",
+        source.secretRef());
   }
 
   @Test

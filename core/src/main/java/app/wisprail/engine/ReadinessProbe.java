@@ -1,5 +1,6 @@
 package app.wisprail.engine;
 
+import app.wisprail.platform.NetworkPlan;
 import app.wisprail.profile.DomainNames;
 import app.wisprail.profile.Ipv4Cidr;
 import app.wisprail.profile.Profile;
@@ -39,16 +40,16 @@ import org.xbill.DNS.Type;
 final class ReadinessProbe {
   private ReadinessProbe() {}
 
-  static void verify(Profile profile, Duration timeout) throws IOException {
+  static void verify(Profile profile, NetworkPlan network, Duration timeout) throws IOException {
     if (!profile.healthUrl().isBlank()) {
-      https(profile, timeout);
+      https(profile, network, timeout);
     } else {
-      dns(profile, 53, timeout);
+      dns(profile, profile.fullTunnel() ? network.dnsAddress() : profile.dns(), 53, timeout);
     }
   }
 
-  static void dns(Profile profile, int port, Duration timeout) throws IOException {
-    if (profile.dns().isBlank()) {
+  static void dns(Profile profile, String server, int port, Duration timeout) throws IOException {
+    if (server.isBlank()) {
       throw new IOException("Для проверки готовности нужен корпоративный DNS или HTTPS-ресурс");
     }
     String domain = ".";
@@ -59,15 +60,16 @@ final class ReadinessProbe {
       domain = (suffix.length() < 200 ? nonce + "." : "") + suffix + ".";
       type = Type.A;
     }
-    SimpleResolver resolver = new SimpleResolver(profile.dns());
-    resolver.setAddress(new InetSocketAddress(profile.dns(), port));
+    SimpleResolver resolver = new SimpleResolver(server);
+    resolver.setAddress(new InetSocketAddress(server, port));
     resolver.setTimeout(timeout);
     Message request = Message.newQuery(Record.newRecord(Name.fromString(domain), type, DClass.IN));
     Message response = resolver.send(request);
     requireResponse(request, response);
   }
 
-  static List<String> resolveIpv4(Profile profile, String host, Duration timeout)
+  static List<String> resolveIpv4(
+      Profile profile, NetworkPlan network, String host, Duration timeout)
       throws IOException {
     if (host.matches("[0-9.]+")) {
       Ipv4Cidr.parseAddress(host);
@@ -81,8 +83,14 @@ final class ReadinessProbe {
           !profile.dns().isBlank()
               && profile.domains().stream()
                   .anyMatch(suffix -> DomainNames.matches(queriedHost, suffix));
-      SimpleResolver resolver =
-          corporate ? new SimpleResolver(profile.dns()) : new SimpleResolver();
+      SimpleResolver resolver;
+      if (profile.fullTunnel()) {
+        resolver = new SimpleResolver(network.dnsAddress());
+      } else if (corporate) {
+        resolver = new SimpleResolver(profile.dns());
+      } else {
+        resolver = new SimpleResolver();
+      }
       long remaining = deadline - System.nanoTime();
       if (remaining <= 0) {
         throw new IOException("Истекло время разрешения IPv4-адреса");
@@ -132,20 +140,27 @@ final class ReadinessProbe {
     }
     if (response.getRcode() != Rcode.NOERROR && response.getRcode() != Rcode.NXDOMAIN) {
       throw new IOException(
-          "Корпоративный DNS отклонил проверку: " + Rcode.string(response.getRcode()));
+          "DNS VPN отклонил проверку: " + Rcode.string(response.getRcode()));
     }
   }
 
-  private static void https(Profile profile, Duration timeout) throws IOException {
+  private static void https(Profile profile, NetworkPlan network, Duration timeout)
+      throws IOException {
     URI uri = URI.create(profile.healthUrl());
     long deadline = System.nanoTime() + timeout.toNanos();
-    List<String> resolved = resolveIpv4(profile, uri.getHost(), timeout);
+    List<String> resolved = resolveIpv4(profile, network, uri.getHost(), timeout);
     List<Ipv4Cidr> networks = profile.networks().stream().map(Ipv4Cidr::parse).toList();
     if (resolved.isEmpty()
         || resolved.stream()
             .anyMatch(
                 address -> networks.stream().noneMatch(network -> network.contains(address)))) {
       throw new IOException("Ресурс проверки разрешается вне выбранных IPv4-сетей");
+    }
+    List<Ipv4Cidr> exclusions = network.routeExclusions().stream().map(Ipv4Cidr::parse).toList();
+    if (resolved.stream()
+        .anyMatch(
+            address -> exclusions.stream().anyMatch(exclusion -> exclusion.contains(address)))) {
+      throw new IOException("Ресурс проверки разрешается в исключение маршрута VPN");
     }
     InetAddress[] addresses = new InetAddress[resolved.size()];
     for (int index = 0; index < addresses.length; index++) {

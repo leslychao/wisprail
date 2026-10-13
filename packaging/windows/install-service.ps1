@@ -123,7 +123,7 @@ function Write-SystemFile([string]$Path, [string]$Value) {
         Set-SystemAcl $temporary $false
         if (Test-Path -LiteralPath $Path) {
             Assert-TrustedObject $Path
-            [IO.File]::Replace($temporary, $Path, $null)
+            [IO.File]::Replace($temporary, $Path, [NullString]::Value)
         } else {
             [IO.File]::Move($temporary, $Path)
         }

@@ -21,6 +21,8 @@ final class TestGateway implements ConnectionGateway {
   int connects;
   int disconnects;
   int refreshes;
+  Profile preparedProfile;
+  ProfileSecrets preparedSecrets;
 
   TestGateway(ConnectionSnapshot snapshot) {
     this.snapshot = snapshot;
@@ -65,6 +67,8 @@ final class TestGateway implements ConnectionGateway {
 
   @Override
   public CompletionStage<PreparedConnection> prepare(Profile profile, ProfileSecrets secrets) {
+    preparedProfile = profile;
+    preparedSecrets = secrets;
     return CompletableFuture.completedFuture(
         new PreparedConnection(
             UUID.randomUUID(),
@@ -72,7 +76,7 @@ final class TestGateway implements ConnectionGateway {
             profile.id(),
             profile.revision(),
             snapshot.revision(),
-            true,
+            snapshot.activeProfile() != null,
             List.of(),
             Instant.now().plusSeconds(60)));
   }

@@ -149,12 +149,12 @@ public final class ProfileImporter {
             uri.getHost(),
             port,
             settings,
-            List.of(),
+            Profile.FULL_TUNNEL_NETWORKS,
             "",
             List.of(),
             "",
             "");
-    notes.add("Укажите выбранные IPv4-сети и корпоративный DNS или HTTPS-ресурс проверки.");
+    notes.add("Весь интернет и DNS будут направлены через VPN. Сети заполнять не нужно.");
     notes.add("Профиль не сохранён и не подключён.");
     return new ImportResult(profile, new ProfileSecrets("", "", "", "", "", uuid), notes);
   }

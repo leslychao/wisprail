@@ -216,6 +216,7 @@ public final class SingboxEngineControl implements EngineControl {
         long remaining = deadline - System.nanoTime();
         ReadinessProbe.verify(
             running.candidate.profile(),
+            running.candidate.network,
             Duration.ofNanos(Math.min(remaining, Duration.ofSeconds(3).toNanos())));
         return;
       } catch (IOException failure) {
@@ -223,8 +224,7 @@ public final class SingboxEngineControl implements EngineControl {
         Thread.sleep(200);
       }
     }
-    throw new IOException(
-        "VPN не подтвердил доступность корпоративного DNS или HTTPS-ресурса", last);
+    throw new IOException("VPN не подтвердил доступность DNS или HTTPS-ресурса", last);
   }
 
   @Override
@@ -405,27 +405,30 @@ public final class SingboxEngineControl implements EngineControl {
                 : "Готовность движка или применённые системные объекты не подтверждены";
     checks.add(new DiagnosticCheck("VPN и маршруты", appliedStatus, appliedDetail));
     checks.add(new DiagnosticCheck("Системные параметры", appliedStatus, appliedDetail));
+    String dnsDetail = appliedDetail;
+    if (applied && verified && profile.fullTunnel()) {
+      dnsDetail = "DNS туннеля настроен; ответ проверяется в разделе «Ресурс VPN»";
+    } else if (applied && verified && profile.domains().isEmpty()) {
+      dnsDetail = "Домены не заданы; системные DNS-настройки не изменены";
+    }
     checks.add(
         new DiagnosticCheck(
-            "Split DNS",
-            appliedStatus,
-            applied && verified && profile.domains().isEmpty()
-                ? "Домены не заданы; системные DNS-настройки не изменены"
-                : appliedDetail));
-    if (verified && (!profile.dns().isBlank() || !profile.healthUrl().isBlank())) {
+            profile.fullTunnel() ? "DNS VPN" : "Split DNS", appliedStatus, dnsDetail));
+    if (verified
+        && (profile.fullTunnel() || !profile.dns().isBlank() || !profile.healthUrl().isBlank())) {
       try {
-        ReadinessProbe.verify(profile, Duration.ofSeconds(5));
+        ReadinessProbe.verify(profile, running.candidate.network, Duration.ofSeconds(5));
         checks.add(
             new DiagnosticCheck(
                 "Ресурс VPN",
                 CheckStatus.PASS,
-                "Получен ответ корпоративного DNS или HTTPS-ресурса"));
+                "Получен ответ DNS или HTTPS-ресурса через VPN"));
       } catch (IOException failure) {
         checks.add(
             new DiagnosticCheck(
                 "Ресурс VPN",
                 CheckStatus.FAIL,
-                "Корпоративный DNS или HTTPS-ресурс не ответил успешно"));
+                "DNS или HTTPS-ресурс VPN не ответил успешно"));
       }
     } else {
       checks.add(
@@ -462,7 +465,9 @@ public final class SingboxEngineControl implements EngineControl {
     }
     List<String> addresses;
     if (verified) {
-      addresses = ReadinessProbe.resolveIpv4(profile, host, Duration.ofSeconds(5));
+      addresses =
+          ReadinessProbe.resolveIpv4(
+              profile, running.candidate.network, host, Duration.ofSeconds(5));
     } else if (host.matches("[0-9.]+")) {
       Ipv4Cidr.parseAddress(host);
       addresses = List.of(host);

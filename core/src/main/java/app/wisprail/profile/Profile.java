@@ -18,6 +18,8 @@ public record Profile(
     String healthUrl,
     String secretRef) {
 
+  public static final List<String> FULL_TUNNEL_NETWORKS = List.of("0.0.0.0/0");
+
   public Profile {
     Objects.requireNonNull(id);
     Objects.requireNonNull(settings);
@@ -49,6 +51,14 @@ public record Profile(
 
   public VpnType type() {
     return settings.type();
+  }
+
+  public boolean fullTunnel() {
+    return isFullTunnel(networks);
+  }
+
+  public static boolean isFullTunnel(List<String> networks) {
+    return networks.equals(FULL_TUNNEL_NETWORKS);
   }
 
   public Profile withIdentity(UUID newId, long newRevision, String newName, String reference) {

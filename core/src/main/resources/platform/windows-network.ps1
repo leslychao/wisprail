@@ -14,7 +14,7 @@ function Get-OwnedRules {
 }
 
 if ($Operation -eq 'Inspect') {
-    $routes = @(Get-NetRoute -AddressFamily IPv4 | Select-Object DestinationPrefix, NextHop, InterfaceAlias, InterfaceIndex)
+    $routes = @(Get-NetRoute | Select-Object DestinationPrefix, NextHop, InterfaceAlias, InterfaceIndex)
     $interfaces = @(Get-NetIPInterface -AddressFamily IPv4 | Select-Object InterfaceAlias, InterfaceIndex)
     $rules = @(Get-DnsClientNrptRule | Select-Object Name, Namespace, NameServers, Comment)
     $effective = @(Get-DnsClientNrptPolicy -Effective | Select-Object Namespace, NameServers)

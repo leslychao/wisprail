@@ -411,7 +411,10 @@ final class JournalView extends BorderPane implements AutoCloseable {
             ? List.of(
                     "Сетевой компонент",
                     "Конфигурация",
-                    "VPN и выбранные маршруты",
+                    diagnosticProfile.getValue() != null
+                            && diagnosticProfile.getValue().fullTunnel()
+                        ? "VPN и весь интернет"
+                        : "VPN и выбранные маршруты",
                     "DNS",
                     "Другие настройки системы")
                 .stream()

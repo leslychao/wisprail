@@ -68,6 +68,12 @@ final class MainWindow implements AutoCloseable {
     RECONNECT
   }
 
+  private enum ImportAction {
+    CANCEL,
+    EDIT,
+    CONNECT
+  }
+
   private enum ExitAction {
     CANCEL,
     TRAY,
@@ -527,12 +533,25 @@ final class MainWindow implements AutoCloseable {
 
   private void importPreview(ImportResult result) {
     Profile profile = result.profile();
+    List<ValidationIssue> issues = ProfileValidator.validate(profile, result.secrets());
+    boolean readyToConnect = profile.fullTunnel() && issues.isEmpty();
+    String routingSummary;
+    if (profile.fullTunnel()) {
+      String dnsSummary = profile.dns().isBlank() ? "автоматически через VPN" : profile.dns();
+      routingSummary = "\nЧерез VPN: Весь интернет\nDNS: " + dnsSummary;
+    } else {
+      routingSummary =
+          "\nСетей: " + profile.networks().size() + " · DNS-доменов: " + profile.domains().size();
+    }
     VBox details =
         new VBox(
             12,
             Ui.label(
-                "Перед сохранением проверьте распознанные настройки. "
-                    + "Подключение не запускается, секреты не показываются.",
+                readyToConnect
+                    ? "Проверьте распознанные настройки. Кнопка «Сохранить и подключить» "
+                        + "добавит профиль и запустит VPN."
+                    : "Перед сохранением проверьте распознанные настройки. "
+                        + "Подключение не запускается, секреты не показываются.",
                 "hint"),
             Ui.label(
                 "Название: "
@@ -543,15 +562,11 @@ final class MainWindow implements AutoCloseable {
                     + profile.server()
                     + ":"
                     + profile.port()
-                    + "\nСетей: "
-                    + profile.networks().size()
-                    + " · DNS-доменов: "
-                    + profile.domains().size(),
+                    + routingSummary,
                 "body"));
     for (String note : result.notes()) {
       details.getChildren().add(Ui.notice(note, "warning"));
     }
-    List<ValidationIssue> issues = ProfileValidator.validate(profile, result.secrets());
     if (!issues.isEmpty()) {
       details
           .getChildren()
@@ -563,15 +578,21 @@ final class MainWindow implements AutoCloseable {
                           .collect(Collectors.joining("; ")),
                   "warning"));
     }
-    if (dialogs
-        .choose(
-            "Проверьте импорт",
-            Ui.scroll(details),
-            List.of(
-                new Dialogs.Choice<>("Отмена", false, true, false),
-                new Dialogs.Choice<>("Перейти к настройкам", true, false, false)))
-        .orElse(false)) {
-      openEditor(profile, result.secrets(), 0);
+    List<Dialogs.Choice<ImportAction>> choices = new ArrayList<>();
+    choices.add(new Dialogs.Choice<>("Отмена", ImportAction.CANCEL, true, false));
+    choices.add(new Dialogs.Choice<>("Перейти к настройкам", ImportAction.EDIT, false, false));
+    if (readyToConnect) {
+      choices.add(
+          new Dialogs.Choice<>("Сохранить и подключить", ImportAction.CONNECT, false, false));
+    }
+    ImportAction action =
+        dialogs
+            .choose("Проверьте импорт", Ui.scroll(details), choices)
+            .orElse(ImportAction.CANCEL);
+    switch (action) {
+      case EDIT -> openEditor(profile, result.secrets(), 0);
+      case CONNECT -> saveDraft(new ProfileEditor.Draft(profile, result.secrets()), true);
+      case CANCEL -> {}
     }
   }
 
@@ -591,6 +612,10 @@ final class MainWindow implements AutoCloseable {
   }
 
   private void saveDraft(ProfileEditor.Draft draft) {
+    saveDraft(draft, false);
+  }
+
+  private void saveDraft(ProfileEditor.Draft draft, boolean connectAfterSave) {
     if (saving || !valid(draft)) {
       return;
     }
@@ -621,7 +646,9 @@ final class MainWindow implements AutoCloseable {
     }
     boolean reconnect = action == SaveAction.RECONNECT;
     saving = true;
-    editor.setDisable(true);
+    if (editor != null) {
+      editor.setDisable(true);
+    }
     tasks.run(
         "Сохранение профиля",
         () -> repository.save(draft.profile(), draft.profile().revision(), draft.secrets()),
@@ -636,8 +663,13 @@ final class MainWindow implements AutoCloseable {
                 gateway.renameActive(saved.id(), saved.name()),
                 ignored -> {});
           }
-          if (reconnect) {
-            requestConnect(saved);
+          if (reconnect || connectAfterSave) {
+            if (snapshot.busy() || connectionRequested) {
+              showToast(
+                  "Профиль сохранён. Подключите его после завершения текущей операции VPN.");
+            } else {
+              requestConnect(saved);
+            }
           } else {
             showToast(
                 networkChange
@@ -917,7 +949,10 @@ final class MainWindow implements AutoCloseable {
         networks.add(value);
         if (Ipv4Cidr.coversEntireIpv4(networks)) {
           throw new IllegalArgumentException(
-              "В сумме сети охватывают весь IPv4-интернет. " + "Полный туннель не поддерживается.");
+              "В сумме сети охватывают весь IPv4-интернет. "
+                  + (target.draft().profile().type() == VpnType.VLESS
+                      ? "Для этого выберите режим «Весь интернет» на вкладке «Сети»."
+                      : "Полный туннель OpenVPN не поддерживается."));
         }
         if (others.stream().map(Ipv4Cidr::parse).anyMatch(network -> network.overlaps(value))
             && !dialogs.confirm(

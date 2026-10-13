@@ -41,6 +41,7 @@ final class ProfileEditor extends BorderPane {
   private final TextField server = new TextField();
   private final TextField port = new TextField();
   private final ComboBox<VpnType> type = new ComboBox<>();
+  private final ComboBox<String> routing = new ComboBox<>();
   private final TextField healthUrl = new TextField();
   private final ComboBox<String> transport = new ComboBox<>();
   private final ComboBox<String> vlessTransport = new ComboBox<>();
@@ -104,6 +105,8 @@ final class ProfileEditor extends BorderPane {
     type.setDisable(profile.revision() > 0);
     type.setButtonCell(typeCell());
     type.setCellFactory(view -> typeCell());
+    routing.getItems().setAll("Весь интернет", "Выбранные сети");
+    routing.setValue(profile.fullTunnel() ? "Весь интернет" : "Выбранные сети");
     transport.getItems().setAll("udp", "tcp");
     transport.setValue("udp");
     vlessTransport.getItems().setAll(VlessSettings.SUPPORTED_TRANSPORTS);
@@ -159,7 +162,7 @@ final class ProfileEditor extends BorderPane {
     tlsAuthKey = secrets.tlsAuthKey();
     tlsCryptKey = secrets.tlsCryptKey();
     uuid.setText(secrets.uuid());
-    networks.setAll(profile.networks());
+    networks.setAll(profile.fullTunnel() ? List.of() : profile.networks());
     domains.setAll(profile.domains());
     dns.setText(profile.dns());
     healthUrl.setText(profile.healthUrl());
@@ -171,6 +174,7 @@ final class ProfileEditor extends BorderPane {
               showTab(currentTab);
             });
     security.valueProperty().addListener((observable, oldValue, newValue) -> showTab(currentTab));
+    routing.valueProperty().addListener((observable, oldValue, newValue) -> showTab(currentTab));
     dns.textProperty().addListener((observable, oldValue, newValue) -> updateDnsNotice());
     networks.addListener((ListChangeListener<String>) change -> updateDnsNotice());
 
@@ -298,9 +302,9 @@ final class ProfileEditor extends BorderPane {
             server.getText().trim(),
             parsedPort,
             settings,
-            networks,
-            dns.getText().trim(),
-            domains,
+            fullTunnel() ? Profile.FULL_TUNNEL_NETWORKS : networks,
+            fullTunnel() && !original.fullTunnel() ? "" : dns.getText().trim(),
+            fullTunnel() ? List.of() : domains,
             healthUrl.getText().trim(),
             original.secretRef());
     return new Draft(profile, secrets);
@@ -362,7 +366,8 @@ final class ProfileEditor extends BorderPane {
       tab = 0;
     }
     showTab(tab);
-    if (field.equals("serviceName")
+    if (field.equals("healthUrl")
+        || field.equals("serviceName")
         || (field.equals("transport") && type.getValue() == VpnType.VLESS)) {
       connectionParameters.setExpanded(true);
     }
@@ -419,8 +424,10 @@ final class ProfileEditor extends BorderPane {
             Ui.field(
                 "HTTPS-ресурс для проверки готовности",
                 healthUrl,
-                "Необязательно при наличии корпоративного DNS. Только HTTPS внутри выбранных"
-                    + " IPv4-сетей. Публичный ресурс автоматически не используется."));
+                fullTunnel()
+                    ? "Необязательно. Без этого адреса готовность VPN проверяется автоматически."
+                    : "Необязательно при наличии корпоративного DNS. Только HTTPS внутри выбранных"
+                        + " IPv4-сетей. Публичный ресурс автоматически не используется."));
     connectionParameters.setContent(advanced);
     form.getChildren().add(connectionParameters);
   }
@@ -513,6 +520,18 @@ final class ProfileEditor extends BorderPane {
   }
 
   private void networkFields() {
+    if (type.getValue() == VpnType.VLESS) {
+      form.getChildren().add(Ui.field("Что направлять через VPN", routing, ""));
+    }
+    if (fullTunnel()) {
+      form.getChildren()
+          .add(
+              Ui.notice(
+                  "Весь интернет и DNS-запросы пойдут через VPN. "
+                      + "Добавлять сети и корпоративный DNS не требуется.",
+                  "information"));
+      return;
+    }
     form.getChildren()
         .addAll(
             Ui.label("Что направлять через VPN", "subheading"),
@@ -530,6 +549,17 @@ final class ProfileEditor extends BorderPane {
   }
 
   private void dnsFields() {
+    if (fullTunnel()) {
+      form.getChildren()
+          .add(
+              Ui.notice(
+                  (original.fullTunnel() && !dns.getText().isBlank()
+                          ? "DNS " + dns.getText().trim() + " используется через VPN. "
+                          : "DNS-запросы направляются через VPN автоматически. ")
+                      + "Корпоративный DNS и список доменов не требуются.",
+                  "information"));
+      return;
+    }
     updateDnsNotice();
     form.getChildren()
         .addAll(
@@ -657,5 +687,9 @@ final class ProfileEditor extends BorderPane {
     } catch (IllegalArgumentException exception) {
       dnsNotice.getChildren().add(Ui.notice("Введите корректный IPv4-адрес DNS-сервера.", "error"));
     }
+  }
+
+  private boolean fullTunnel() {
+    return type.getValue() == VpnType.VLESS && routing.getValue().equals("Весь интернет");
   }
 }

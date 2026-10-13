@@ -12,6 +12,7 @@ import com.sun.jna.platform.win32.W32ServiceManager;
 import com.sun.jna.platform.win32.Win32Exception;
 import com.sun.jna.platform.win32.WinBase;
 import com.sun.jna.platform.win32.WinDef.ULONGByReference;
+import com.sun.jna.platform.win32.WinError;
 import com.sun.jna.platform.win32.WinNT;
 import com.sun.jna.platform.win32.WinNT.HANDLE;
 import com.sun.jna.platform.win32.WinNT.HANDLEByReference;
@@ -79,10 +80,26 @@ public final class WindowsPipeTransport {
       throw failure("Не удалось определить пользователя");
     }
     try {
-      return Advapi32Util.getTokenAccount(token.getValue()).sidString;
+      return tokenUserSid(token.getValue());
     } finally {
       Kernel32.INSTANCE.CloseHandle(token.getValue());
     }
+  }
+
+  private static String tokenUserSid(HANDLE token) throws IOException {
+    IntByReference required = new IntByReference();
+    if (Advapi32.INSTANCE.GetTokenInformation(
+            token, WinNT.TOKEN_INFORMATION_CLASS.TokenUser, null, 0, required)
+        || Kernel32.INSTANCE.GetLastError() != WinError.ERROR_INSUFFICIENT_BUFFER) {
+      throw failure("Не удалось определить размер пользователя токена");
+    }
+    WinNT.TOKEN_USER user = new WinNT.TOKEN_USER(required.getValue());
+    if (!Advapi32.INSTANCE.GetTokenInformation(
+        token, WinNT.TOKEN_INFORMATION_CLASS.TokenUser, user, required.getValue(), required)) {
+      throw failure("Не удалось прочитать пользователя токена");
+    }
+    // SID equality needs no account lookup, which can fail under SECURITY_IDENTIFICATION.
+    return Advapi32Util.convertSidToStringSid(user.User.Sid);
   }
 
   public static IpcConnection connect() throws IOException {
@@ -215,7 +232,7 @@ public final class WindowsPipeTransport {
             throw failure("Не удалось проверить токен UI");
           }
           try {
-            actualOwner = Advapi32Util.getTokenAccount(token.getValue()).sidString;
+            actualOwner = tokenUserSid(token.getValue());
           } finally {
             Kernel32.INSTANCE.CloseHandle(token.getValue());
           }

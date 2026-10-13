@@ -18,7 +18,7 @@ class ProfileImporterTest {
   @TempDir Path directory;
 
   @Test
-  void vlessImportsRealityWithoutInventingNetworks() {
+  void vlessImportsRealityForFullInternetWithoutManualNetworkSettings() {
     ImportResult result =
         new ProfileImporter()
             .importVless(
@@ -26,7 +26,8 @@ class ProfileImporterTest {
                     + "?type=tcp&security=reality&sni=example.test&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
                     + "&sid=00&fp=chrome&flow=xtls-rprx-vision#%D0%A0%D0%B0%D0%B1%D0%BE%D1%82%D0%B0");
     assertEquals("Работа", result.profile().name());
-    assertTrue(result.profile().networks().isEmpty());
+    assertEquals(List.of("0.0.0.0/0"), result.profile().networks());
+    assertTrue(ProfileValidator.validate(result.profile(), result.secrets()).isEmpty());
     VlessSettings settings = (VlessSettings) result.profile().settings();
     assertEquals(TlsMode.REALITY, settings.security());
     assertEquals("tcp", settings.transport());
@@ -59,7 +60,10 @@ class ProfileImporterTest {
             ""),
         result.profile().settings());
     assertEquals(ProfileFixtures.secrets().uuid(), result.secrets().uuid());
-    assertTrue(result.profile().networks().isEmpty());
+    assertEquals(List.of("0.0.0.0/0"), result.profile().networks());
+    assertTrue(result.profile().dns().isEmpty());
+    assertTrue(result.profile().healthUrl().isEmpty());
+    assertTrue(ProfileValidator.validate(result.profile(), result.secrets()).isEmpty());
     assertTrue(result.notes().stream().anyMatch(note -> note.contains("spx")));
   }
 

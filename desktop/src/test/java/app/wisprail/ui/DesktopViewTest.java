@@ -70,6 +70,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TitledPane;
 import javafx.scene.image.WritableImage;
@@ -676,6 +677,144 @@ class DesktopViewTest {
     Path exported = temporary.resolve("grpc.json");
     repository.exportProfile(saved, exported);
     assertEquals(settings, new ProfileImporter().importFile(exported).profile().settings());
+  }
+
+  @Test
+  void pastedVlessLinkCanBeSavedAndConnectedWithoutManualNetworkOrDns() throws Exception {
+    String link =
+        "vless://00000000-0000-4000-8000-000000000001@vpn.example:8443"
+            + "?type=grpc&encryption=none&serviceName=&authority=&security=reality"
+            + "&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&fp=chrome"
+            + "&sni=www.example.com&sid=abcdef123456&spx=%2F#Personal";
+    ProfileRepository repository = localRepository();
+    TestGateway gateway = new TestGateway(ConnectionSnapshot.initial());
+    MainWindow main =
+        fx(
+            () -> {
+              MainWindow window = new MainWindow(stage, repository, gateway);
+              window.show();
+              return window;
+            });
+    CompletableFuture<Void> adding = new CompletableFuture<>();
+    try {
+      Platform.runLater(
+          () -> {
+            try {
+              invoke(main, "addProfile", new Class<?>[0]);
+              adding.complete(null);
+            } catch (Throwable failure) {
+              adding.completeExceptionally(failure);
+            }
+          });
+      Window method = awaitDialog("Добавить VPN");
+      fx(
+          () -> {
+            button(method.getScene().getRoot(), "По ссылке · VLESS").fire();
+            return null;
+          });
+      Window input = awaitDialog("Добавление по ссылке");
+      fx(
+          () -> {
+            TextArea value =
+                nodes(input.getScene().getRoot())
+                    .filter(TextArea.class::isInstance)
+                    .map(TextArea.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+            value.setText(link);
+            button(input.getScene().getRoot(), "Продолжить").fire();
+            return null;
+          });
+      adding.get(10, TimeUnit.SECONDS);
+      Window preview = awaitDialog("Проверьте импорт");
+      fx(
+          () -> {
+            String displayed = text(preview.getScene().getRoot());
+            assertTrue(displayed.contains("Весь интернет"));
+            assertFalse(displayed.contains("Требует заполнения"));
+            assertFalse(displayed.contains("Укажите выбранные IPv4-сети"));
+            assertFalse(displayed.contains("00000000-0000-4000-8000-000000000001"));
+            assertEquals(0, gateway.connects);
+            capture(preview, "import-full-tunnel");
+            button(preview.getScene().getRoot(), "Сохранить и подключить").fire();
+            return null;
+          });
+      awaitFx(
+          () -> gateway.connects == 1, "Import must save and connect without opening the editor");
+      Profile saved = repository.list().getFirst();
+      fx(
+          () -> {
+            assertEquals(saved, gateway.preparedProfile);
+            assertEquals(List.of("0.0.0.0/0"), saved.networks());
+            assertEquals("", saved.dns());
+            assertEquals(List.of(), saved.domains());
+            assertEquals("", saved.healthUrl());
+            assertEquals(
+                "00000000-0000-4000-8000-000000000001", gateway.preparedSecrets.uuid());
+            assertEquals("grpc", ((VlessSettings) saved.settings()).transport());
+            assertFalse(text(stage.getScene().getRoot()).contains("Сети через VPN"));
+            assertTrue(text(stage.getScene().getRoot()).contains("Весь интернет"));
+            capture(stage, "full-tunnel-connection");
+            return null;
+          });
+    } finally {
+      fx(
+          () -> {
+            for (Window dialog : List.copyOf(Window.getWindows())) {
+              if (dialog != stage && dialog.isShowing()) {
+                dialog.hide();
+              }
+            }
+            main.close();
+            stage.hide();
+            return null;
+          });
+    }
+  }
+
+  @Test
+  void fullTunnelModePreservesSelectiveSettingsWhenSwitchingBackBeforeSave() throws Exception {
+    fx(
+        () -> {
+          Profile selective = vless();
+          ProfileEditor editor = editor(selective, new AtomicInteger());
+          editor.showTab(2);
+          show(editor, 1070, 700);
+          ComboBox<?> routing = field(editor, "routing", ComboBox.class);
+          assertEquals("Выбранные сети", routing.getValue());
+          routing.getSelectionModel().select(routing.getItems().indexOf("Весь интернет"));
+          assertEquals(List.of("0.0.0.0/0"), editor.draft().profile().networks());
+          assertEquals("", editor.draft().profile().dns());
+          assertEquals(List.of(), editor.draft().profile().domains());
+          assertFalse(text(editor).contains("+ Добавить сеть"));
+          editor.showTab(3);
+          assertFalse(text(editor).contains("DNS-сервер этого VPN"));
+          assertTrue(text(editor).contains("через VPN"));
+          editor.showTab(2);
+          routing.getSelectionModel().select(routing.getItems().indexOf("Выбранные сети"));
+          assertEquals(selective, editor.draft().profile());
+          assertFalse(editor.isDirty());
+          Profile full =
+              new Profile(
+                  selective.id(),
+                  selective.revision(),
+                  selective.name(),
+                  selective.server(),
+                  selective.port(),
+                  selective.settings(),
+                  Profile.FULL_TUNNEL_NETWORKS,
+                  "1.1.1.1",
+                  List.of(),
+                  "https://example.com/health",
+                  selective.secretRef());
+          ProfileEditor fullEditor = editor(full, new AtomicInteger());
+          assertEquals(full, fullEditor.draft().profile());
+          assertFalse(fullEditor.isDirty());
+          fullEditor.showError("healthUrl", "Проверьте HTTPS-ресурс");
+          assertTrue(field(fullEditor, "healthUrl", TextField.class).getParent().isVisible());
+          assertTrue(field(fullEditor, "connectionParameters", TitledPane.class).isExpanded());
+          return null;
+        });
   }
 
   @Test
@@ -1508,6 +1647,23 @@ class DesktopViewTest {
           return null;
         });
     finished.get(10, TimeUnit.SECONDS);
+  }
+
+  private static Window awaitDialog(String title) throws Exception {
+    AtomicReference<Window> shown = new AtomicReference<>();
+    awaitFx(
+        () -> {
+          shown.set(
+              Window.getWindows().stream()
+                  .filter(window -> window != stage && window.isShowing())
+                  .filter(
+                      window -> window instanceof Stage dialog && dialog.getTitle().equals(title))
+                  .findFirst()
+                  .orElse(null));
+          return shown.get() != null;
+        },
+        "Owned dialog did not open: " + title);
+    return shown.get();
   }
 
   private static void capture(Window window, String name) throws IOException {

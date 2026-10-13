@@ -11,7 +11,8 @@ public record NetworkPlan(
     List<String> serverAddresses,
     List<String> routeExclusions,
     List<String> selectedNetworks,
-    List<String> domains) {
+    List<String> domains,
+    String tunIpv6Cidr) {
   public NetworkPlan {
     serverAddresses = List.copyOf(serverAddresses);
     routeExclusions = List.copyOf(routeExclusions);
@@ -34,6 +35,7 @@ public record NetworkPlan(
         serverAddresses,
         routeExclusions,
         List.of(),
-        List.of());
+        List.of(),
+        "");
   }
 }

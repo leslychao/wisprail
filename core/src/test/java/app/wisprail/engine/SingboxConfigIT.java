@@ -44,9 +44,16 @@ class SingboxConfigIT {
   @TempDir Path temporary;
 
   @ParameterizedTest
-  @CsvSource({"tcp,''", "grpc,''", "grpc,wisprail-test"})
+  @CsvSource({
+    "tcp,'',false",
+    "grpc,'',false",
+    "grpc,wisprail-test,false",
+    "tcp,'',true",
+    "grpc,'',true",
+    "grpc,wisprail-test,true"
+  })
   void vlessTlsCarriesRealUdpDnsResponseThroughPinnedEngineWithoutTun(
-      String transport, String serviceName) throws Exception {
+      String transport, String serviceName, boolean fullTunnel) throws Exception {
     Path executable = engine();
     EngineCredentials credentials = EngineCredentials.create();
     String uuid = UUID.randomUUID().toString();
@@ -112,9 +119,9 @@ class SingboxConfigIT {
               "127.0.0.1",
               vlessPort,
               new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", transport, serviceName),
-              List.of("127.0.0.0/8"),
-              "127.0.0.1",
-              List.of("corp.example"),
+              fullTunnel ? List.of("0.0.0.0/0") : List.of("127.0.0.0/8"),
+              fullTunnel ? "" : "127.0.0.1",
+              fullTunnel ? List.of() : List.of("corp.example"),
               "",
               "");
       NetworkPlan network =
@@ -124,7 +131,10 @@ class SingboxConfigIT {
               "198.18.1.1/30",
               "198.18.1.2",
               List.of("127.0.0.1"),
-              List.of());
+              List.of(),
+              profile.networks(),
+              profile.domains(),
+              fullTunnel ? "fdfe:dcba:9876::1/126" : "");
       JsonObject generated =
           SingboxConfig.create(
               profile,
@@ -142,11 +152,27 @@ class SingboxConfigIT {
       forward.addProperty("listen", "127.0.0.1");
       forward.addProperty("listen_port", dnsPort);
       forward.addProperty("network", "udp");
-      forward.addProperty("override_address", "127.0.0.1");
-      forward.addProperty("override_port", dns.getLocalPort());
+      forward.addProperty("override_address", fullTunnel ? network.dnsAddress() : "127.0.0.1");
+      forward.addProperty("override_port", fullTunnel ? 53 : dns.getLocalPort());
       JsonObject client = new JsonObject();
       client.add("inbounds", array(forward));
       client.add("outbounds", array(outbound));
+      if (fullTunnel) {
+        // Exercise generated DNS hijacking and its VPN detour without creating system routes.
+        forward.addProperty("tag", SingboxConfig.TUN_TAG);
+        JsonObject dnsServer =
+            generated
+                .getAsJsonObject("dns")
+                .getAsJsonArray("servers")
+                .get(0)
+                .getAsJsonObject();
+        dnsServer.addProperty("server", "127.0.0.1");
+        dnsServer.addProperty("server_port", dns.getLocalPort());
+        client.add("dns", generated.getAsJsonObject("dns"));
+        JsonObject route = generated.getAsJsonObject("route");
+        route.remove("auto_detect_interface");
+        client.add("route", route);
+      }
       Process remote = startLoopback(executable, "vless-server", server);
       Process local = null;
       try {
@@ -154,7 +180,7 @@ class SingboxConfigIT {
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         while (true) {
           try {
-            ReadinessProbe.dns(profile, dnsPort, Duration.ofSeconds(1));
+            ReadinessProbe.dns(profile, "127.0.0.1", dnsPort, Duration.ofSeconds(1));
             break;
           } catch (IOException starting) {
             if (!local.isAlive() || !remote.isAlive() || System.nanoTime() >= deadline) {
@@ -163,7 +189,8 @@ class SingboxConfigIT {
           }
         }
         finished.set(true);
-        assertTrue(answer.get(2, TimeUnit.SECONDS).endsWith(".corp.example."));
+        String question = answer.get(2, TimeUnit.SECONDS);
+        assertTrue(fullTunnel ? question.equals(".") : question.endsWith(".corp.example."));
       } finally {
         finished.set(true);
         if (local != null) {
@@ -218,6 +245,19 @@ class SingboxConfigIT {
                 "",
                 "grpc",
                 ""));
+    Profile fullTunnel =
+        new Profile(
+            grpcReality.id(),
+            1,
+            "Internet",
+            grpcReality.server(),
+            grpcReality.port(),
+            grpcReality.settings(),
+            List.of("0.0.0.0/0"),
+            "",
+            List.of(),
+            "",
+            "");
     Profile openVpn =
         profile(
             new OpenVpnSettings(
@@ -232,7 +272,7 @@ class SingboxConfigIT {
                 -1));
     ProfileSecrets secrets =
         new ProfileSecrets("test-password", "", "", "", "", UUID.randomUUID().toString());
-    for (Profile profile : List.of(vless, grpcReality, openVpn)) {
+    for (Profile profile : List.of(vless, grpcReality, fullTunnel, openVpn)) {
       NetworkPlan network =
           new NetworkPlan(
               UUID.randomUUID(),
@@ -240,7 +280,10 @@ class SingboxConfigIT {
               "198.18.1.1/30",
               "198.18.1.2",
               List.of("192.0.2.10"),
-              List.of("192.0.2.10/32"));
+              List.of("192.0.2.10/32"),
+              profile.networks(),
+              profile.domains(),
+              profile.fullTunnel() ? "fdfe:dcba:9876::1/126" : "");
       JsonObject config =
           SingboxConfig.create(
               profile,
@@ -251,7 +294,7 @@ class SingboxConfigIT {
               credentials.certificate(),
               credentials.key());
       assertEquals(
-          "disabled",
+          profile.fullTunnel() ? "hijack" : "disabled",
           config.getAsJsonArray("inbounds").get(0).getAsJsonObject().get("dns_mode").getAsString());
       assertEquals(
           SingboxConfig.VPN_TAG,
@@ -262,6 +305,34 @@ class SingboxConfigIT {
               .getAsJsonObject()
               .get("detour")
               .getAsString());
+      if (profile.fullTunnel()) {
+        JsonObject tun = config.getAsJsonArray("inbounds").get(0).getAsJsonObject();
+        assertEquals(
+            List.of("198.18.1.1/30", "fdfe:dcba:9876::1/126"),
+            tun.getAsJsonArray("address").asList().stream()
+                .map(value -> value.getAsString())
+                .toList());
+        assertEquals(
+            List.of("0.0.0.0/0", "::/1", "8000::/1"),
+            tun.getAsJsonArray("route_address").asList().stream()
+                .map(value -> value.getAsString())
+                .toList());
+        assertTrue(tun.get("strict_route").getAsBoolean());
+        assertFalse(config.getAsJsonObject("dns").has("rules"));
+        assertEquals(
+            "1.1.1.1",
+            config
+                .getAsJsonObject("dns")
+                .getAsJsonArray("servers")
+                .get(0)
+                .getAsJsonObject()
+                .get("server")
+                .getAsString());
+        JsonObject route = config.getAsJsonObject("route");
+        assertTrue(route.get("auto_detect_interface").getAsBoolean());
+        assertFalse(route.getAsJsonArray("rules").get(0).getAsJsonObject().has("ip_cidr"));
+        assertFalse(route.getAsJsonArray("rules").get(1).getAsJsonObject().has("ip_cidr"));
+      }
       if (profile.settings() instanceof VlessSettings settings) {
         JsonObject outbound = config.getAsJsonArray("outbounds").get(0).getAsJsonObject();
         assertFalse(outbound.has("network"));

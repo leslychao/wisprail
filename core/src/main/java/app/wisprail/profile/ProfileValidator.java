@@ -59,9 +59,15 @@ public final class ProfileValidator {
           issues.add(new ValidationIssue("networks", "Список содержит некорректную IPv4-сеть"));
         }
       }
-      if (Ipv4Cidr.coversEntireIpv4(networks)) {
-        issues.add(new ValidationIssue("networks", "Полный туннель IPv4 не поддерживается"));
+      if (Ipv4Cidr.coversEntireIpv4(networks)
+          && (!profile.fullTunnel() || profile.type() != VpnType.VLESS)) {
+        issues.add(
+            new ValidationIssue(
+                "networks", "Для полного туннеля выберите режим «Весь интернет» у VLESS"));
       }
+    }
+    if (profile.fullTunnel() && !profile.domains().isEmpty()) {
+      issues.add(new ValidationIssue("domains", "В режиме «Весь интернет» DNS обслуживает все домены"));
     }
     if (!profile.dns().isBlank()) {
       try {
@@ -233,7 +239,7 @@ public final class ProfileValidator {
     if (!settings.transport().equals("grpc") && !settings.serviceName().isEmpty()) {
       issues.add(new ValidationIssue("serviceName", "Имя службы требует транспорт gRPC"));
     }
-    if (profile.dns().isBlank() && profile.healthUrl().isBlank()) {
+    if (!profile.fullTunnel() && profile.dns().isBlank() && profile.healthUrl().isBlank()) {
       issues.add(
           new ValidationIssue("healthUrl", "Для проверки VLESS нужен DNS или HTTPS-ресурс VPN"));
     }

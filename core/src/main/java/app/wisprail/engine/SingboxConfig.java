@@ -14,6 +14,7 @@ import java.util.List;
 public final class SingboxConfig {
   public static final String VPN_TAG = "wisprail-vpn";
   public static final String TUN_TAG = "wisprail-tun";
+  private static final String INTERNET_DNS = "1.1.1.1";
 
   private SingboxConfig() {}
 
@@ -35,13 +36,21 @@ public final class SingboxConfig {
     tun.addProperty("type", "tun");
     tun.addProperty("tag", TUN_TAG);
     tun.addProperty("interface_name", network.interfaceName());
-    tun.add("address", strings(List.of(network.tunCidr())));
+    boolean fullTunnel = profile.fullTunnel();
+    tun.add(
+        "address",
+        strings(
+            fullTunnel
+                ? List.of(network.tunCidr(), network.tunIpv6Cidr())
+                : List.of(network.tunCidr())));
     tun.addProperty("mtu", 1500);
     tun.addProperty("stack", "mixed");
     tun.addProperty("auto_route", true);
-    tun.addProperty("strict_route", false);
-    tun.addProperty("dns_mode", "disabled");
-    tun.add("route_address", strings(profile.networks()));
+    tun.addProperty("strict_route", fullTunnel);
+    tun.addProperty("dns_mode", fullTunnel ? "hijack" : "disabled");
+    tun.add(
+        "route_address",
+        strings(fullTunnel ? List.of("0.0.0.0/0", "::/1", "8000::/1") : profile.networks()));
     tun.add("route_exclude_address", strings(network.routeExclusions()));
     config.add("inbounds", array(tun));
 
@@ -62,41 +71,48 @@ public final class SingboxConfig {
     JsonObject corporate = new JsonObject();
     corporate.addProperty("type", "udp");
     corporate.addProperty("tag", "corporate");
-    corporate.addProperty("server", profile.dns());
+    corporate.addProperty(
+        "server", fullTunnel && profile.dns().isBlank() ? INTERNET_DNS : profile.dns());
     corporate.addProperty("server_port", 53);
     corporate.addProperty("detour", VPN_TAG);
     dns.add("servers", array(corporate));
     dns.addProperty("final", "corporate");
     dns.addProperty("disable_cache", true);
-    JsonArray dnsRules = new JsonArray();
-    if (!profile.domains().isEmpty()) {
-      JsonObject domains = new JsonObject();
-      domains.add("domain_suffix", strings(profile.domains()));
-      domains.addProperty("action", "route");
-      domains.addProperty("server", "corporate");
-      dnsRules.add(domains);
+    if (!fullTunnel) {
+      JsonArray dnsRules = new JsonArray();
+      if (!profile.domains().isEmpty()) {
+        JsonObject domains = new JsonObject();
+        domains.add("domain_suffix", strings(profile.domains()));
+        domains.addProperty("action", "route");
+        domains.addProperty("server", "corporate");
+        dnsRules.add(domains);
+      }
+      JsonObject rejectDns = new JsonObject();
+      rejectDns.addProperty("action", "reject");
+      dnsRules.add(rejectDns);
+      dns.add("rules", dnsRules);
     }
-    JsonObject rejectDns = new JsonObject();
-    rejectDns.addProperty("action", "reject");
-    dnsRules.add(rejectDns);
-    dns.add("rules", dnsRules);
-    if (!profile.dns().isBlank()) {
+    if (fullTunnel || !profile.dns().isBlank()) {
       config.add("dns", dns);
     }
 
     JsonObject route = new JsonObject();
     JsonArray rules = new JsonArray();
-    JsonObject dnsInbound = new JsonObject();
-    dnsInbound.add("inbound", strings(List.of(TUN_TAG)));
-    dnsInbound.add("ip_cidr", strings(List.of(network.dnsAddress() + "/32")));
-    dnsInbound.addProperty("port", 53);
-    dnsInbound.addProperty("action", "hijack-dns");
-    if (!profile.dns().isBlank()) {
+    if (fullTunnel || !profile.dns().isBlank()) {
+      JsonObject dnsInbound = new JsonObject();
+      dnsInbound.add("inbound", strings(List.of(TUN_TAG)));
+      if (!fullTunnel) {
+        dnsInbound.add("ip_cidr", strings(List.of(network.dnsAddress() + "/32")));
+      }
+      dnsInbound.addProperty("port", 53);
+      dnsInbound.addProperty("action", "hijack-dns");
       rules.add(dnsInbound);
     }
     JsonObject selected = new JsonObject();
     selected.add("inbound", strings(List.of(TUN_TAG)));
-    selected.add("ip_cidr", strings(profile.networks()));
+    if (!fullTunnel) {
+      selected.add("ip_cidr", strings(profile.networks()));
+    }
     selected.addProperty("action", "route");
     selected.addProperty("outbound", VPN_TAG);
     rules.add(selected);
@@ -104,6 +120,9 @@ public final class SingboxConfig {
     reject.addProperty("action", "reject");
     rules.add(reject);
     route.add("rules", rules);
+    if (fullTunnel) {
+      route.addProperty("auto_detect_interface", true);
+    }
     config.add("route", route);
 
     JsonObject api = new JsonObject();

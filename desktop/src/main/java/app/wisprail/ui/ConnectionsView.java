@@ -222,7 +222,10 @@ final class ConnectionsView extends BorderPane {
       detail.getChildren().add(preparing);
     }
     String status = "Не подключён";
-    String description = "Работает только для выбранных сетей";
+    String description =
+        shown.fullTunnel()
+            ? "Весь интернет пойдёт через VPN"
+            : "Работает только для выбранных сетей";
     String actionText = snapshot.activeProfile() == null ? "Подключить" : "Переключиться";
     Action requested = Action.CONNECT;
     boolean busyHere = (active || target) && snapshot.busy() && !snapshot.preparing();
@@ -230,7 +233,8 @@ final class ConnectionsView extends BorderPane {
         snapshot.state() == ConnectionState.ERROR && (target || snapshot.cleanupRequired());
     if (active && snapshot.state() == ConnectionState.CONNECTED) {
       status = "Подключён";
-      description = "VPN работает для выбранных сетей";
+      description =
+          shown.fullTunnel() ? "Весь интернет идёт через VPN" : "VPN работает для выбранных сетей";
       actionText = "Отключить";
       requested = Action.DISCONNECT;
     } else if (busyHere) {
@@ -306,34 +310,57 @@ final class ConnectionsView extends BorderPane {
     VBox summary =
         new VBox(
             8,
-            Ui.label(active ? "Действующие настройки VPN" : "Настройки этого VPN", "section-label"),
-            summary("network", "Сети через VPN", networkChips(shown.networks()), Action.NETWORKS),
-            summary(
-                "globe",
-                "DNS для выбранных доменов",
-                Ui.label(
-                    shown.dns().isBlank()
-                        ? "Используется системный DNS"
-                        : String.join(", ", shown.domains())
-                            + "\n"
-                            + shown.dns()
-                            + " · через этот VPN",
-                    "muted"),
-                Action.DNS),
-            summary(
-                "swap",
-                "Другие адреса",
-                Ui.label(
-                    "По текущим настройкам системы.\n"
-                        + "В том числе через другой VPN, если он настроен в системе.",
-                    "muted"),
-                null));
+            Ui.label(
+                active ? "Действующие настройки VPN" : "Настройки этого VPN", "section-label"));
+    if (shown.fullTunnel()) {
+      summary
+          .getChildren()
+          .addAll(
+              summary(
+                  "network", "Через VPN", Ui.label("Весь интернет", "muted"), Action.NETWORKS),
+              summary(
+                  "globe",
+                  "DNS через VPN",
+                  Ui.label(
+                      shown.dns().isBlank()
+                          ? "Автоматически · корпоративный DNS не требуется"
+                          : shown.dns() + " · через этот VPN",
+                      "muted"),
+                  Action.DNS));
+    } else {
+      summary
+          .getChildren()
+          .addAll(
+              summary("network", "Сети через VPN", networkChips(shown.networks()), Action.NETWORKS),
+              summary(
+                  "globe",
+                  "DNS для выбранных доменов",
+                  Ui.label(
+                      shown.dns().isBlank()
+                          ? "Используется системный DNS"
+                          : String.join(", ", shown.domains())
+                              + "\n"
+                              + shown.dns()
+                              + " · через этот VPN",
+                      "muted"),
+                  Action.DNS),
+              summary(
+                  "swap",
+                  "Другие адреса",
+                  Ui.label(
+                      "По текущим настройкам системы.\n"
+                          + "В том числе через другой VPN, если он настроен в системе.",
+                      "muted"),
+                  null));
+    }
     detail.getChildren().add(summary);
     TitledPane technical =
         new TitledPane(
             "Технические сведения",
             Ui.label(
-                "Режим: только выбранные IPv4-сети\n"
+                (shown.fullTunnel()
+                        ? "Режим: весь интернет\n"
+                        : "Режим: только выбранные IPv4-сети\n")
                     + "Сохранённая ревизия: "
                     + selected.revision()
                     + "\n"
