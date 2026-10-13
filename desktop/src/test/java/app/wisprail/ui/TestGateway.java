@@ -20,6 +20,7 @@ final class TestGateway implements ConnectionGateway {
   private final ConnectionSnapshot snapshot;
   int connects;
   int disconnects;
+  int refreshes;
 
   TestGateway(ConnectionSnapshot snapshot) {
     this.snapshot = snapshot;
@@ -28,6 +29,12 @@ final class TestGateway implements ConnectionGateway {
   @Override
   public ConnectionSnapshot snapshot() {
     return snapshot;
+  }
+
+  @Override
+  public CompletionStage<ConnectionSnapshot> refresh() {
+    refreshes++;
+    return CompletableFuture.completedFuture(snapshot);
   }
 
   @Override
@@ -43,6 +50,9 @@ final class TestGateway implements ConnectionGateway {
 
   @Override
   public List<ConnectionEvent> recentEvents() {
+    if (snapshot.activeProfile() == null) {
+      return List.of();
+    }
     return List.of(
         new ConnectionEvent(
             1,

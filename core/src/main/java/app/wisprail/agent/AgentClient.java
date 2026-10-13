@@ -27,12 +27,18 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /** Asynchronous UI proxy. An unavailable service does not prevent local profile editing. */
 public final class AgentClient implements ConnectionGateway {
+  private static final int MAX_RECONNECT_ATTEMPTS = 8;
+  private static final String UNAVAILABLE_MESSAGE =
+      "Служба управления недоступна. Установите или проверьте компонент.";
+
   @FunctionalInterface
   public interface Connector {
     IpcConnection connect() throws IOException;
@@ -57,6 +63,8 @@ public final class AgentClient implements ConnectionGateway {
   private volatile IpcConnection channel;
   private volatile boolean closed;
   private long serviceRevision = Long.MIN_VALUE;
+  private int reconnectAttempts;
+  private ScheduledFuture<?> reconnect;
 
   public AgentClient(Connector connector) {
     this.connector = connector;
@@ -75,6 +83,14 @@ public final class AgentClient implements ConnectionGateway {
   @Override
   public ConnectionSnapshot snapshot() {
     return snapshot;
+  }
+
+  @Override
+  public synchronized CompletionStage<ConnectionSnapshot> refresh() {
+    cancelReconnect();
+    reconnectAttempts = 0;
+    return request("snapshot", JsonNull.INSTANCE, ConnectionSnapshot.class)
+        .thenApply(ignored -> snapshot());
   }
 
   @Override
@@ -282,7 +298,9 @@ public final class AgentClient implements ConnectionGateway {
                         new IOException(
                             "Связь со службой потеряна; состояние VPN требует проверки")));
     pending.clear();
-    if (!closed) {
+    if (!closed
+        && (snapshot.state() != ConnectionState.ERROR
+            || !UNAVAILABLE_MESSAGE.equals(snapshot.message()))) {
       updateSnapshot(
           new ConnectionSnapshot(
               snapshot.revision() + 1,
@@ -295,7 +313,34 @@ public final class AgentClient implements ConnectionGateway {
                   || snapshot.cleanupRequired()
                   || snapshot.state() == ConnectionState.CONNECTING
                   || snapshot.state() == ConnectionState.DISCONNECTING,
-              "Служба управления недоступна. Установите или проверьте компонент."));
+              UNAVAILABLE_MESSAGE));
+    }
+    scheduleReconnect();
+  }
+
+  private void scheduleReconnect() {
+    if (closed || reconnect != null || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      return;
+    }
+    long maximumDelay = Math.min(15_000L, 1_000L << reconnectAttempts);
+    long delay = ThreadLocalRandom.current().nextLong(maximumDelay / 2, maximumDelay + 1);
+    reconnect =
+        sender.schedule(
+            () -> {
+              synchronized (this) {
+                reconnect = null;
+                reconnectAttempts++;
+                request("snapshot", JsonNull.INSTANCE, ConnectionSnapshot.class);
+              }
+            },
+            delay,
+            TimeUnit.MILLISECONDS);
+  }
+
+  private void cancelReconnect() {
+    if (reconnect != null) {
+      reconnect.cancel(false);
+      reconnect = null;
     }
   }
 
@@ -307,6 +352,8 @@ public final class AgentClient implements ConnectionGateway {
       return;
     }
     serviceRevision = value.revision();
+    cancelReconnect();
+    reconnectAttempts = 0;
     updateSnapshot(
         new ConnectionSnapshot(
             snapshot.revision() + 1,
@@ -327,6 +374,7 @@ public final class AgentClient implements ConnectionGateway {
   @Override
   public synchronized void close() {
     closed = true;
+    cancelReconnect();
     sender.shutdownNow();
     failConnection(channel);
   }

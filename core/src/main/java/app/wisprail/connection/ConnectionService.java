@@ -111,6 +111,11 @@ public final class ConnectionService implements ConnectionGateway {
   }
 
   @Override
+  public CompletionStage<ConnectionSnapshot> refresh() {
+    return CompletableFuture.completedFuture(snapshot());
+  }
+
+  @Override
   public synchronized AutoCloseable subscribe(Consumer<ConnectionSnapshot> listener) {
     listeners.add(listener);
     listener.accept(snapshot);

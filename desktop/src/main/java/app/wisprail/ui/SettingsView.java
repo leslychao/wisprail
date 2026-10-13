@@ -13,6 +13,7 @@ import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import javafx.scene.Node;
+import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -37,6 +38,8 @@ final class SettingsView extends BorderPane {
   private final Label version = Ui.label("Не проверено", "hint");
   private final ToggleButton generalTab = new ToggleButton("Общие");
   private final ToggleButton componentsTab = new ToggleButton("Компоненты и данные");
+  private final Button install =
+      Ui.button("Установить / разрешить", "small-button", this::requestInstallation);
 
   SettingsView(
       PlatformDesktopIntegration platform,
@@ -191,7 +194,7 @@ final class SettingsView extends BorderPane {
             setting(
                 "Системное разрешение",
                 "Требуется для виртуального интерфейса и собственного DNS.",
-                Ui.button("Установить / разрешить", "small-button", this::requestInstallation)));
+                install));
     card.getStyleClass().add("settings-card");
     VBox data =
         new VBox(
@@ -228,10 +231,8 @@ final class SettingsView extends BorderPane {
     tasks.run(
         "Проверка компонента",
         platform::serviceStatus,
-        result -> {
-          status.setText(result.message());
-          onStatus.accept(result);
-        });
+        this::componentChecked,
+        this::componentFailed);
     tasks.run(
         "Проверка версии движка",
         () -> {
@@ -269,6 +270,9 @@ final class SettingsView extends BorderPane {
   }
 
   private void requestInstallation() {
+    if (install.isDisabled()) {
+      return;
+    }
     if (!dialogs.confirm(
         "Разрешите работу VPN",
         "Приложению нужно создать виртуальный сетевой "
@@ -278,15 +282,41 @@ final class SettingsView extends BorderPane {
         false)) {
       return;
     }
+    install.setDisable(true);
+    status.setText("Подготавливаем компонент…");
     tasks.run(
         "Системное разрешение",
         () -> {
           platform.requestServiceInstallation();
-          return true;
+          return platform.serviceStatus();
         },
-        requested -> {
-          status.setText("Запрос передан системе. После подтверждения нажмите «Проверить».");
+        result -> {
+          install.setDisable(false);
+          componentChecked(result);
+        },
+        failure -> {
+          install.setDisable(false);
+          componentFailed(failure);
         });
+  }
+
+  void showComponentStatus(ComponentStatus component) {
+    status.setText(component.message());
+  }
+
+  private void componentChecked(ComponentStatus component) {
+    showComponentStatus(component);
+    onStatus.accept(component);
+  }
+
+  private void componentFailed(Throwable failure) {
+    String message = failure.getMessage();
+    componentChecked(
+        new ComponentStatus(
+            ComponentStatus.State.ERROR,
+            message == null || message.isBlank()
+                ? "Не удалось подготовить компонент. Повторите установку."
+                : message));
   }
 
   private void openDirectory(Path directory) {

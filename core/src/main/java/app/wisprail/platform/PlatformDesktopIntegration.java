@@ -15,7 +15,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** User actions invoke native registration; system passwords never pass through Java. */
+/** Prepares the native service through the OS; system passwords never pass through Java. */
 public final class PlatformDesktopIntegration {
   private static final String RUN_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
   private final Path installationDirectory;
@@ -56,12 +56,34 @@ public final class PlatformDesktopIntegration {
     };
   }
 
+  public ComponentStatus prepareService() throws IOException {
+    ComponentStatus status = serviceStatus();
+    if (!PlatformServices.isWindows() || status.state() == ComponentStatus.State.READY) {
+      return status;
+    }
+    if (status.state() == ComponentStatus.State.ERROR) {
+      throw new IOException(status.message());
+    }
+    requestServiceInstallation();
+    return serviceStatus();
+  }
+
   public void requestServiceInstallation() throws IOException {
     if (PlatformServices.isWindows()) {
       Path script = installationDirectory.resolve("app/platform/windows/install-service.ps1");
       if (!Files.isRegularFile(script)) {
         throw new IOException("Установщик компонента отсутствует в дистрибутиве");
       }
+      String programFilesValue = System.getenv("ProgramFiles");
+      if (programFilesValue == null || programFilesValue.isBlank()) {
+        throw new IOException("Системный каталог Program Files не определён");
+      }
+      Path programFiles = Path.of(programFilesValue).toAbsolutePath().normalize();
+      boolean protectedImage =
+          installationDirectory.startsWith(programFiles)
+              && !installationDirectory.equals(programFiles);
+      Path serviceDirectory =
+          protectedImage ? installationDirectory : programFiles.resolve("Wisprail");
       String powershell =
           Path.of(
                   System.getenv("SystemRoot"),
@@ -78,14 +100,20 @@ public final class PlatformDesktopIntegration {
           "-NoProfile -ExecutionPolicy RemoteSigned -File "
               + PlatformProcess.quote(script.toString())
               + " -InstallRoot "
-              + PlatformProcess.quote(installationDirectory.toString())
+              + PlatformProcess.quote(serviceDirectory.toString())
+              + (protectedImage
+                  ? ""
+                  : " -SourceRoot " + PlatformProcess.quote(installationDirectory.toString()))
               + " -OwnerSid "
               + PlatformProcess.quote(WindowsPipeTransport.currentUserSid());
       request.lpDirectory = installationDirectory.toString();
       request.nShow = 0;
       if (!Shell32.INSTANCE.ShellExecuteEx(request) || request.hProcess == null) {
+        int errorCode = Kernel32.INSTANCE.GetLastError();
         throw new IOException(
-            "Установка не разрешена системой (код ОС " + Kernel32.INSTANCE.GetLastError() + ")");
+            errorCode == 1223
+                ? "Подготовка компонента отменена в запросе Windows. Повторите её в настройках."
+                : "Установка не разрешена системой (код ОС " + errorCode + ")");
       }
       try {
         if (Kernel32.INSTANCE.WaitForSingleObject(request.hProcess, 120_000) != 0) {

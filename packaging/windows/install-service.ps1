@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)][string]$InstallRoot,
     [string]$OwnerSid,
     [ValidateSet('Install', 'Rollback', 'Commit', 'PrepareRemove', 'CommitRemove', 'Restore')][string]$Operation = 'Install',
-    [string]$InstallerTransaction
+    [string]$InstallerTransaction,
+    [string]$SourceRoot
 )
 $ErrorActionPreference = 'Stop'
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -32,6 +33,9 @@ $unsafeRights = [Security.AccessControl.FileSystemRights]::Write -bor
     [Security.AccessControl.FileSystemRights]::TakeOwnership
 if ($InstallerTransaction -and $InstallerTransaction -notmatch '^\{[0-9A-Fa-f-]{36}\}$') {
     throw 'Недопустимый идентификатор транзакции установщика.'
+}
+if ($SourceRoot -and ($Operation -ne 'Install' -or $InstallerTransaction)) {
+    throw 'Подготовка распакованного приложения доступна только при обычной установке компонента.'
 }
 
 function Assert-NoReparse([string]$Path) {
@@ -125,6 +129,147 @@ function Get-OwnedService {
     return $service
 }
 
+function Initialize-ServiceState {
+    foreach ($directory in @($stateParent, $state)) {
+        Assert-NoReparse $directory
+        if (-not (Test-Path -LiteralPath $directory)) {
+            [IO.Directory]::CreateDirectory($directory) | Out-Null
+        }
+        Assert-TrustedObject $directory
+        Set-SystemAcl $directory $true
+    }
+    foreach ($file in @($ownerFile, $transactionFile, $removeJournal)) {
+        if (Test-Path -LiteralPath $file) { Assert-TrustedObject $file }
+    }
+}
+
+function Assert-ServiceImage([string]$Path) {
+    foreach ($name in @('Wisprail.exe', 'WisprailAgent.exe', 'app\WisprailAgent.cfg',
+            'app\engine\sing-box.exe', 'app\platform\windows\install-service.ps1',
+            'app\platform\windows\remove-service.ps1', 'runtime\bin\server\jvm.dll')) {
+        $file = Join-Path $Path $name
+        Assert-NoReparse $file
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw 'Распакованное приложение не содержит полного сетевого компонента.'
+        }
+    }
+}
+
+function Assert-TrustedTree([string]$Path, [int]$Depth = 0) {
+    if ($Depth -gt 32) { throw 'Слишком глубокая структура системного компонента.' }
+    Assert-TrustedObject $Path
+    if ([IO.Directory]::Exists($Path)) {
+        foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($Path)) {
+            Assert-TrustedTree $child ($Depth + 1)
+        }
+    }
+}
+
+function Copy-ServiceImage([string]$Source, [string]$Destination, [int]$Depth = 0) {
+    if ($Depth -gt 32) { throw 'Слишком глубокая структура распакованного приложения.' }
+    Assert-NoReparse $Source
+    foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($Source)) {
+        Assert-NoReparse $child
+        $target = Join-Path $Destination ([IO.Path]::GetFileName($child))
+        if ([IO.Directory]::Exists($child)) {
+            [IO.Directory]::CreateDirectory($target) | Out-Null
+            Copy-ServiceImage $child $target ($Depth + 1)
+        } else {
+            $sourceStream = [IO.FileStream]::new($child, [IO.FileMode]::Open,
+                [IO.FileAccess]::Read, [IO.FileShare]::Read)
+            try {
+                $destinationStream = [IO.FileStream]::new($target, [IO.FileMode]::CreateNew,
+                    [IO.FileAccess]::Write, [IO.FileShare]::None)
+                try {
+                    # New files inherit protected destination ACLs, never source permissions.
+                    $sourceStream.CopyTo($destinationStream, 65536)
+                    $destinationStream.Flush($true)
+                } finally { $destinationStream.Dispose() }
+            } finally { $sourceStream.Dispose() }
+        }
+    }
+}
+
+if ($SourceRoot) {
+    $source = [IO.Path]::GetFullPath($SourceRoot).TrimEnd('\')
+    if ($root -eq $source -or
+        $root.StartsWith($source + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Источник компонента не должен содержать каталог установки.'
+    }
+    if ($OwnerSid -notmatch '^S-1-(?:5-21-(?:\d+-){3}\d+|12-1-(?:\d+-){3}\d+)$') {
+        throw 'Требуется SID обычного локального, доменного или Entra-пользователя Windows.'
+    }
+    $null = [Security.Principal.SecurityIdentifier]::new($OwnerSid)
+    $parent = Split-Path -Parent $root
+    $ancestor = $parent
+    while ($ancestor.StartsWith($programFiles, [StringComparison]::OrdinalIgnoreCase)) {
+        Assert-TrustedObject $ancestor
+        $ancestor = Split-Path -Parent $ancestor
+    }
+    Initialize-ServiceState
+    $lockFile = Join-Path $stateParent 'bootstrap.lock'
+    Assert-NoReparse $lockFile
+    if (Test-Path -LiteralPath $lockFile) { Assert-TrustedObject $lockFile }
+    # An overlapping launch fails safely; the next launch reuses the completed image.
+    $lock = [IO.FileStream]::new($lockFile, [IO.FileMode]::OpenOrCreate,
+        [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $staging = $null
+    try {
+        Assert-TrustedObject $lockFile
+        if (Test-Path -LiteralPath $ownerFile) {
+            if ((Get-Item -LiteralPath $ownerFile).Length -gt 256) {
+                throw 'Повреждён владелец службы.'
+            }
+            if ((Get-Content -LiteralPath $ownerFile -Raw).Trim() -ne $OwnerSid) {
+                throw 'Сетевой компонент принадлежит другому пользователю Windows.'
+            }
+        }
+        $installed = Get-CimInstance Win32_Service -Filter "Name='WisprailAgent'"
+        if ($installed) {
+            if ($installed.StartName -ne 'LocalSystem' -or
+                $installed.PathName -notmatch '^"([^"\r\n]+\\WisprailAgent\.exe)" --service$') {
+                throw 'Существующая служба не принадлежит защищённой установке Wisprail.'
+            }
+            $root = [IO.Path]::GetFullPath((Split-Path -Parent $Matches[1])).TrimEnd('\')
+            if (-not $root.StartsWith($programFiles + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Существующая служба установлена вне Program Files.'
+            }
+        } elseif (-not (Test-Path -LiteralPath $root)) {
+            Assert-ServiceImage $source
+            $candidate = Join-Path $parent ('Wisprail-staging-' + [Guid]::NewGuid().ToString('N'))
+            New-Item -Path $candidate -ItemType Directory | Out-Null
+            $staging = $candidate
+            Assert-TrustedObject $staging
+            Copy-ServiceImage $source $staging
+            Assert-ServiceImage $staging
+            [IO.Directory]::Move($staging, $root)
+            $staging = $null
+        }
+        $ancestor = $root
+        while ($ancestor.StartsWith($programFiles, [StringComparison]::OrdinalIgnoreCase)) {
+            Assert-TrustedObject $ancestor
+            $ancestor = Split-Path -Parent $ancestor
+        }
+        Assert-ServiceImage $root
+        Assert-TrustedTree $root
+        # Registration remains owned by the existing protected installation script.
+        & (Join-Path $root 'app\platform\windows\install-service.ps1') -InstallRoot $root -OwnerSid $OwnerSid
+        if ($LASTEXITCODE -ne 0) { throw 'Установка сетевого компонента завершилась ошибкой.' }
+    } finally {
+        try {
+            if ($staging -and (Test-Path -LiteralPath $staging)) {
+                $resolved = [IO.Path]::GetFullPath($staging)
+                if (-not $resolved.StartsWith($parent + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'Недопустимый путь незавершённой копии компонента.'
+                }
+                Assert-TrustedTree $resolved
+                Remove-Item -LiteralPath $resolved -Recurse -Force
+            }
+        } finally { $lock.Dispose() }
+    }
+    exit 0
+}
+
 # Establish trust before reading retained identity, journal, or changing ACLs.
 $ancestor = $root
 while ($ancestor.StartsWith($programFiles, [StringComparison]::OrdinalIgnoreCase)) {
@@ -133,17 +278,7 @@ while ($ancestor.StartsWith($programFiles, [StringComparison]::OrdinalIgnoreCase
     }
     $ancestor = Split-Path -Parent $ancestor
 }
-foreach ($directory in @($stateParent, $state)) {
-    Assert-NoReparse $directory
-    if (-not (Test-Path -LiteralPath $directory)) {
-        [IO.Directory]::CreateDirectory($directory) | Out-Null
-    }
-    Assert-TrustedObject $directory
-    Set-SystemAcl $directory $true
-}
-foreach ($file in @($ownerFile, $transactionFile, $removeJournal)) {
-    if (Test-Path -LiteralPath $file) { Assert-TrustedObject $file }
-}
+Initialize-ServiceState
 
 if ($Operation -eq 'PrepareRemove') {
     if (Test-Path -LiteralPath $removeJournal) { throw 'Предыдущее удаление не завершено.' }

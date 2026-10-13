@@ -13,6 +13,7 @@ import app.wisprail.connection.ConnectionState;
 import app.wisprail.connection.DiagnosticCheck;
 import app.wisprail.connection.DiagnosticReport;
 import app.wisprail.connection.PreparedConnection;
+import app.wisprail.platform.ComponentStatus;
 import app.wisprail.profile.ImportResult;
 import app.wisprail.profile.OpenVpnSettings;
 import app.wisprail.profile.Profile;
@@ -42,9 +43,12 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -115,6 +119,228 @@ class DesktopViewTest {
           return null;
         });
     Platform.exit();
+  }
+
+  @Test
+  void startupPreparesMissingComponentBeforeCreatingTheClientWithoutBlockingFx() throws Exception {
+    ProfileRepository repository = localRepository();
+    CountDownLatch preparing = new CountDownLatch(1);
+    CountDownLatch permitted = new CountDownLatch(1);
+    AtomicReference<ComponentStatus.State> component =
+        new AtomicReference<>(ComponentStatus.State.MISSING);
+    AtomicBoolean preparationOnFx = new AtomicBoolean();
+    AtomicInteger clients = new AtomicInteger();
+    WisprailApplication application =
+        new WisprailApplication(
+            () -> repository,
+            () -> {
+              preparationOnFx.set(Platform.isFxApplicationThread());
+              preparing.countDown();
+              assertTrue(permitted.await(10, TimeUnit.SECONDS));
+              component.set(ComponentStatus.State.READY);
+              return new ComponentStatus(component.get(), "Компонент запущен");
+            },
+            () -> {
+              assertEquals(ComponentStatus.State.READY, component.get());
+              clients.incrementAndGet();
+              return new TestGateway(ConnectionSnapshot.initial());
+            });
+    try {
+      fx(
+          () -> {
+            application.start(stage);
+            return null;
+          });
+      assertTrue(preparing.await(10, TimeUnit.SECONDS));
+      assertFalse(preparationOnFx.get());
+      fx(
+          () -> {
+            assertTrue(text(stage.getScene().getRoot()).contains("подготавливаем компонент"));
+            assertEquals(0, clients.get());
+            return null;
+          });
+      permitted.countDown();
+      awaitFx(
+          () -> text(stage.getScene().getRoot()).contains("Добавьте первый VPN"),
+          "The application must open after component preparation");
+      fx(
+          () -> {
+            String displayed = text(stage.getScene().getRoot());
+            assertEquals(1, clients.get());
+            assertFalse(displayed.contains("Компонент недоступен"));
+            assertFalse(displayed.contains("Ошибка подключения"));
+            return null;
+          });
+    } finally {
+      permitted.countDown();
+      fx(
+          () -> {
+            application.stop();
+            stage.hide();
+            stage.setMinWidth(0);
+            stage.setMinHeight(0);
+            return null;
+          });
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"Установка не разрешена системой", "Установка компонента не завершена"})
+  void deniedOrFailedPreparationLeavesActionableStatusAndLocalProfileEditing(String failure)
+      throws Exception {
+    ProfileRepository repository = localRepository();
+    AtomicInteger clients = new AtomicInteger();
+    WisprailApplication application =
+        new WisprailApplication(
+            () -> repository,
+            () -> {
+              throw new IOException(failure);
+            },
+            () -> {
+              clients.incrementAndGet();
+              return new TestGateway(ConnectionSnapshot.initial());
+            });
+    try {
+      fx(
+          () -> {
+            application.start(stage);
+            return null;
+          });
+      awaitFx(
+          () -> text(stage.getScene().getRoot()).contains("Открыть настройки компонента"),
+          "A failed component must remain visible on the empty connections screen");
+      fx(
+          () -> {
+            String displayed = text(stage.getScene().getRoot());
+            assertEquals(1, clients.get());
+            assertTrue(displayed.contains(failure));
+            assertTrue(displayed.contains("Компонент недоступен"));
+            assertFalse(displayed.contains("Ошибка подключения"));
+            assertFalse(button(stage.getScene().getRoot(), "Добавить VPN").isDisabled());
+            MainWindow main = field(application, "window", MainWindow.class);
+            invoke(
+                main,
+                "openEditor",
+                new Class<?>[] {Profile.class, ProfileSecrets.class, int.class},
+                Profile.draft(VpnType.OPENVPN),
+                ProfileSecrets.empty(),
+                0);
+            assertFalse(button(stage.getScene().getRoot(), "Сохранить").isDisabled());
+            assertTrue(text(stage.getScene().getRoot()).contains("Компонент недоступен"));
+            return null;
+          });
+    } finally {
+      fx(
+          () -> {
+            application.stop();
+            stage.hide();
+            stage.setMinWidth(0);
+            stage.setMinHeight(0);
+            return null;
+          });
+    }
+  }
+
+  @Test
+  void stoppedApplicationIgnoresLatePreparationAndDoesNotCreateClient() throws Exception {
+    ProfileRepository repository = localRepository();
+    CountDownLatch preparing = new CountDownLatch(1);
+    CountDownLatch permitted = new CountDownLatch(1);
+    CountDownLatch finished = new CountDownLatch(1);
+    AtomicInteger clients = new AtomicInteger();
+    WisprailApplication application =
+        new WisprailApplication(
+            () -> repository,
+            () -> {
+              preparing.countDown();
+              try {
+                permitted.await(10, TimeUnit.SECONDS);
+                return new ComponentStatus(ComponentStatus.State.READY, "Компонент запущен");
+              } finally {
+                finished.countDown();
+              }
+            },
+            () -> {
+              clients.incrementAndGet();
+              return new TestGateway(ConnectionSnapshot.initial());
+            });
+    try {
+      fx(
+          () -> {
+            application.start(stage);
+            return null;
+          });
+      assertTrue(preparing.await(10, TimeUnit.SECONDS));
+      fx(
+          () -> {
+            application.stop();
+            return null;
+          });
+      permitted.countDown();
+      assertTrue(finished.await(10, TimeUnit.SECONDS));
+      fx(
+          () -> {
+            assertEquals(0, clients.get());
+            return null;
+          });
+    } finally {
+      permitted.countDown();
+      fx(
+          () -> {
+            application.stop();
+            stage.hide();
+            stage.setMinWidth(0);
+            stage.setMinHeight(0);
+            return null;
+          });
+    }
+  }
+
+  @Test
+  void confirmedComponentInstallationRefreshesClientAndRemovesTheNotice() throws Exception {
+    ProfileRepository repository = localRepository();
+    TestGateway gateway = new TestGateway(ConnectionSnapshot.initial());
+    MainWindow main =
+        fx(
+            () -> {
+              MainWindow window =
+                  new MainWindow(
+                      stage,
+                      repository,
+                      gateway,
+                      new ComponentStatus(ComponentStatus.State.MISSING, "Компонент не установлен"));
+              window.show();
+              return window;
+            });
+    try {
+      fx(
+          () -> {
+            assertTrue(text(stage.getScene().getRoot()).contains("Компонент недоступен"));
+            SettingsView settingsView = field(main, "preferences", SettingsView.class);
+            invoke(
+                settingsView,
+                "componentChecked",
+                new Class<?>[] {ComponentStatus.class},
+                new ComponentStatus(ComponentStatus.State.READY, "Компонент запущен"));
+            return null;
+          });
+      awaitFx(
+          () -> !text(stage.getScene().getRoot()).contains("Компонент недоступен"),
+          "Component confirmation must recover the current client without restarting the UI");
+      fx(
+          () -> {
+            assertEquals(1, gateway.refreshes);
+            assertFalse(text(stage.getScene().getRoot()).contains("Открыть настройки компонента"));
+            return null;
+          });
+    } finally {
+      fx(
+          () -> {
+            main.close();
+            stage.hide();
+            return null;
+          });
+    }
   }
 
   @Test
@@ -697,13 +923,12 @@ class DesktopViewTest {
                         scenario.equals("cleanup"),
                         scenario.equals("cleanup")
                             ? "Не удалось подтвердить очистку"
-                            : "Сервер не ответил вовремя"));
+                            : "Сервер не ответил вовремя"),
+                    scenario.equals("unsupported")
+                        ? "Компонент sing-box недоступен. Подключение пока невозможно."
+                        : "");
                 if (scenario.equals("switch")) {
                   connections.select(SECOND.id());
-                }
-                if (scenario.equals("unsupported")) {
-                  connections.serviceUnavailable(
-                      "Компонент sing-box недоступен. Подключение пока невозможно.");
                 }
                 content = connections;
               }
@@ -1311,6 +1536,28 @@ class DesktopViewTest {
         (title, consumer) -> {},
         editor -> {},
         editor -> {});
+  }
+
+  private ProfileRepository localRepository() throws IOException {
+    Map<String, byte[]> secrets = new ConcurrentHashMap<>();
+    SecretStore store =
+        new SecretStore() {
+          @Override
+          public void write(String reference, byte[] value) {
+            secrets.put(reference, value.clone());
+          }
+
+          @Override
+          public Optional<byte[]> read(String reference) {
+            return Optional.ofNullable(secrets.get(reference)).map(byte[]::clone);
+          }
+
+          @Override
+          public void delete(String reference) {
+            secrets.remove(reference);
+          }
+        };
+    return new ProfileRepository(temporary.resolve("profiles"), store);
   }
 
   private static Profile profile(String name, String network, String dns) {

@@ -97,6 +97,7 @@ final class MainWindow implements AutoCloseable {
   private List<Profile> profiles = List.of();
   private ProfileEditor editor;
   private ConnectionSnapshot snapshot;
+  private String componentUnavailable = "";
   private boolean closed;
   private boolean saving;
   private boolean connectionRequested;
@@ -105,6 +106,14 @@ final class MainWindow implements AutoCloseable {
   private long analysisGeneration;
 
   MainWindow(Stage stage, ProfileRepository repository, ConnectionGateway gateway) {
+    this(stage, repository, gateway, null);
+  }
+
+  MainWindow(
+      Stage stage,
+      ProfileRepository repository,
+      ConnectionGateway gateway,
+      ComponentStatus componentStatus) {
     this.stage = stage;
     this.repository = repository;
     this.gateway = gateway;
@@ -131,10 +140,13 @@ final class MainWindow implements AutoCloseable {
             tasks,
             dialogs,
             tray.available(),
-            status -> {
-              connections.serviceUnavailable(
-                  status.state() == ComponentStatus.State.READY ? "" : status.message());
-            });
+            this::componentStatus);
+    if (componentStatus != null) {
+      preferences.showComponentStatus(componentStatus);
+      if (componentStatus.state() != ComponentStatus.State.READY) {
+        componentUnavailable = componentStatus.message();
+      }
+    }
     StackPane brandMark = new StackPane(Ui.icon("shield"));
     brandMark.getStyleClass().add("brand-mark");
     brandMark.setMinSize(29, 29);
@@ -182,6 +194,7 @@ final class MainWindow implements AutoCloseable {
     snapshots = gateway.subscribe(value -> tasks.dispatch(() -> update(value)));
     events = gateway.subscribeEvents(journal::accept);
     gateway.recentEvents().forEach(journal::accept);
+    renderStatus();
     refreshProfiles(null);
   }
 
@@ -199,22 +212,63 @@ final class MainWindow implements AutoCloseable {
             && (snapshot.state() != ConnectionState.ERROR
                 || !snapshot.message().equals(value.message()));
     snapshot = value;
-    boolean connected = value.activeProfile() != null && value.state() == ConnectionState.CONNECTED;
-    global.setText(connected ? value.activeProfile().name() : TrayController.stateText(value));
-    global.setGraphic(connected ? new Circle(3.5, Color.web("#18794e")) : null);
-    global.setAccessibleText(
-        connected ? "Подключён: " + value.activeProfile().name() : global.getText());
-    connections.update(value);
-    if (value.state() == ConnectionState.ERROR
-        && value.message().contains("Служба управления недоступна")) {
-      connections.serviceUnavailable(value.message());
-    } else if (value.state() != ConnectionState.ERROR) {
-      connections.serviceUnavailable("");
+    boolean serviceError =
+        value.state() == ConnectionState.ERROR
+            && value.message().contains("Служба управления недоступна");
+    if (serviceError) {
+      if (componentUnavailable.isBlank()) {
+        componentUnavailable = value.message();
+      }
+    } else if (value.revision() > 0) {
+      componentUnavailable = "";
     }
+    renderStatus();
     tray.update(value, profiles);
-    if (newError && settings.notifications()) {
+    if (newError && !serviceError && settings.notifications()) {
       tray.notifyError(value.message());
     }
+  }
+
+  private void componentStatus(ComponentStatus status) {
+    if (status.state() == ComponentStatus.State.READY) {
+      tasks.observe(
+          gateway.refresh(),
+          value -> {
+            if (value.revision() < snapshot.revision()) {
+              return;
+            }
+            componentUnavailable = "";
+            update(value);
+          },
+          failure -> {
+            componentUnavailable =
+                "Служба управления недоступна. Повторите проверку компонента в настройках.";
+            renderStatus();
+          });
+    } else {
+      componentUnavailable = status.message();
+      renderStatus();
+    }
+  }
+
+  private void renderStatus() {
+    boolean connected =
+        componentUnavailable.isBlank()
+            && snapshot.activeProfile() != null
+            && snapshot.state() == ConnectionState.CONNECTED;
+    String status;
+    if (!componentUnavailable.isBlank()) {
+      status = "Компонент недоступен";
+    } else if (connected) {
+      status = snapshot.activeProfile().name();
+    } else {
+      status = TrayController.stateText(snapshot);
+    }
+    global.setText(status);
+    global.setGraphic(connected ? new Circle(3.5, Color.web("#18794e")) : null);
+    global.setAccessibleText(
+        connected ? "Подключён: " + snapshot.activeProfile().name() : global.getText());
+    connections.update(snapshot, componentUnavailable);
   }
 
   private void refreshProfiles(UUID selected) {

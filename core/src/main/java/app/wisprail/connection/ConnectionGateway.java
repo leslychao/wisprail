@@ -10,6 +10,9 @@ import java.util.function.Consumer;
 public interface ConnectionGateway extends AutoCloseable {
   ConnectionSnapshot snapshot();
 
+  /** Reads current state, reconnecting to a remote service when necessary. */
+  CompletionStage<ConnectionSnapshot> refresh();
+
   AutoCloseable subscribe(Consumer<ConnectionSnapshot> listener);
 
   AutoCloseable subscribeEvents(Consumer<ConnectionEvent> listener);

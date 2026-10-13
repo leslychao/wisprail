@@ -146,16 +146,13 @@ final class ConnectionsView extends BorderPane {
   }
 
   void update(ConnectionSnapshot value) {
-    snapshot = value;
-    list.refresh();
-    renderDetail();
+    update(value, unavailable);
   }
 
-  void serviceUnavailable(String message) {
-    if (unavailable.equals(message)) {
-      return;
-    }
-    unavailable = message;
+  void update(ConnectionSnapshot value, String serviceMessage) {
+    snapshot = value;
+    unavailable = serviceMessage;
+    list.refresh();
     renderDetail();
   }
 
@@ -175,6 +172,7 @@ final class ConnectionsView extends BorderPane {
                       + "Подключения других программ мы не переключаем.",
                   "hint"));
       empty.setAlignment(Pos.CENTER);
+      addComponentNotice(empty);
       setCenter(empty);
       return;
     }
@@ -201,15 +199,7 @@ final class ConnectionsView extends BorderPane {
     menu.setOnAction(event -> contextMenu.show(menu, Side.BOTTOM, 0, 0));
     menu.setDisable(snapshot.busy());
     VBox detail = Ui.page(Ui.row(title, edit, menu));
-    if (!unavailable.isBlank()) {
-      VBox warning = Ui.notice(unavailable, "error");
-      warning
-          .getChildren()
-          .add(
-              Ui.button(
-                  "Открыть настройки компонента", "link", () -> action.accept(Action.COMPONENTS)));
-      detail.getChildren().add(warning);
-    }
+    addComponentNotice(detail);
     if (!active && snapshot.activeProfile() != null) {
       detail
           .getChildren()
@@ -354,6 +344,19 @@ final class ConnectionsView extends BorderPane {
     technical.getStyleClass().add("technical");
     detail.getChildren().add(technical);
     setCenter(Ui.scroll(detail));
+  }
+
+  private void addComponentNotice(VBox content) {
+    if (unavailable.isBlank()) {
+      return;
+    }
+    VBox warning = Ui.notice(unavailable, "error");
+    warning
+        .getChildren()
+        .add(
+            Ui.button(
+                "Открыть настройки компонента", "link", () -> action.accept(Action.COMPONENTS)));
+    content.getChildren().add(warning);
   }
 
   private static Node networkChips(List<String> networks) {
