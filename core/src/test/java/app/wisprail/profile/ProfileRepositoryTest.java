@@ -90,6 +90,20 @@ class ProfileRepositoryTest {
     assertEquals(saved.networks(), imported.profile().networks());
   }
 
+  @Test
+  void grpcSettingsPersistAcrossRepositoryRestart() throws IOException {
+    MemorySecrets secrets = new MemorySecrets();
+    Path profiles = directory.resolve("profiles");
+    VlessSettings settings =
+        new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", "grpc", "Example.Tunnel-01");
+    Profile saved =
+        new ProfileRepository(profiles, secrets)
+            .save(ProfileFixtures.vless("gRPC", settings), 0, ProfileFixtures.secrets());
+    Profile restored = new ProfileRepository(profiles, secrets).find(saved.id()).orElseThrow();
+    assertEquals(saved, restored);
+    assertEquals(settings, restored.settings());
+  }
+
   private static final class MemorySecrets implements SecretStore {
     private final Map<String, byte[]> values = new HashMap<>();
     private boolean failWrite;

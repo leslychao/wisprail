@@ -220,6 +220,19 @@ public final class ProfileValidator {
 
   private static void validateVless(
       Profile profile, VlessSettings settings, List<ValidationIssue> issues) {
+    if (!VlessSettings.SUPPORTED_TRANSPORTS.contains(settings.transport())) {
+      issues.add(new ValidationIssue("transport", "VLESS поддерживает TCP или gRPC"));
+    }
+    if (!settings.serviceName().matches("[A-Za-z0-9_.-]{0,1024}")) {
+      issues.add(
+          new ValidationIssue(
+              "serviceName",
+              "Имя службы gRPC: до 1024 букв, цифр, точек, _ или -;"
+                  + " пути методов не поддерживаются"));
+    }
+    if (!settings.transport().equals("grpc") && !settings.serviceName().isEmpty()) {
+      issues.add(new ValidationIssue("serviceName", "Имя службы требует транспорт gRPC"));
+    }
     if (profile.dns().isBlank() && profile.healthUrl().isBlank()) {
       issues.add(
           new ValidationIssue("healthUrl", "Для проверки VLESS нужен DNS или HTTPS-ресурс VPN"));
@@ -236,6 +249,8 @@ public final class ProfileValidator {
     }
     if (!Set.of("", "xtls-rprx-vision").contains(settings.flow())) {
       issues.add(new ValidationIssue("flow", "Неподдержанный VLESS flow"));
+    } else if (settings.transport().equals("grpc") && !settings.flow().isEmpty()) {
+      issues.add(new ValidationIssue("flow", "VLESS flow не поддерживается с gRPC"));
     }
     if (!Set.of(
             "",

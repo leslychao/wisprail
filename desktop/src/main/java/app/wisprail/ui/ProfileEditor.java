@@ -43,6 +43,8 @@ final class ProfileEditor extends BorderPane {
   private final ComboBox<VpnType> type = new ComboBox<>();
   private final TextField healthUrl = new TextField();
   private final ComboBox<String> transport = new ComboBox<>();
+  private final ComboBox<String> vlessTransport = new ComboBox<>();
+  private final TextField serviceName = new TextField();
   private final TextField username = new TextField();
   private final SecretField password = new SecretField("пароль VPN", "Спрашивать при подключении");
   private final CheckBox askPassword = new CheckBox("Спрашивать пароль при подключении");
@@ -64,6 +66,8 @@ final class ProfileEditor extends BorderPane {
   private final VBox dnsNotice = new VBox(8);
   private final Label error = Ui.label("", "error-text");
   private final VBox form = new VBox(19);
+  private final TitledPane connectionParameters =
+      new TitledPane("Дополнительные параметры подключения", null);
   private final List<ToggleButton> tabs = new ArrayList<>();
   private final BiConsumer<String, Consumer<String>> chooseCertificate;
   private final Consumer<ProfileEditor> addNetwork;
@@ -102,6 +106,10 @@ final class ProfileEditor extends BorderPane {
     type.setCellFactory(view -> typeCell());
     transport.getItems().setAll("udp", "tcp");
     transport.setValue("udp");
+    vlessTransport.getItems().setAll(VlessSettings.SUPPORTED_TRANSPORTS);
+    vlessTransport.setValue("tcp");
+    vlessTransport.setButtonCell(vlessTransportCell());
+    vlessTransport.setCellFactory(view -> vlessTransportCell());
     keyDirection.getItems().setAll(-1, 0, 1);
     keyDirection.setValue(-1);
     security.getItems().setAll(TlsMode.values());
@@ -136,6 +144,8 @@ final class ProfileEditor extends BorderPane {
       tlsServerName.setText(settings.tlsServerName());
       keyDirection.setValue(settings.tlsKeyDirection());
     } else if (profile.settings() instanceof VlessSettings settings) {
+      vlessTransport.setValue(settings.transport());
+      serviceName.setText(settings.serviceName());
       security.setValue(settings.security());
       sni.setText(settings.serverName());
       publicKey.setText(settings.publicKey());
@@ -210,6 +220,7 @@ final class ProfileEditor extends BorderPane {
             Ui.button("Сохранить", "primary", () -> save.accept(draft())));
     footer.getStyleClass().add("editor-footer");
     setBottom(footer);
+    connectionParameters.setExpanded(false);
     showTab(0);
   }
 
@@ -219,6 +230,20 @@ final class ProfileEditor extends BorderPane {
       protected void updateItem(VpnType item, boolean empty) {
         super.updateItem(item, empty);
         setText(empty || item == null ? "" : item == VpnType.OPENVPN ? "OpenVPN" : "VLESS");
+      }
+    };
+  }
+
+  private static ListCell<String> vlessTransportCell() {
+    return new ListCell<>() {
+      @Override
+      protected void updateItem(String item, boolean empty) {
+        super.updateItem(item, empty);
+        if (empty || item == null) {
+          setText("");
+        } else {
+          setText(item.equals("grpc") ? "gRPC" : "TCP");
+        }
       }
     };
   }
@@ -260,7 +285,9 @@ final class ProfileEditor extends BorderPane {
               publicKey.getText().trim(),
               shortId.getText().trim(),
               fingerprint.getValue(),
-              flow.getValue());
+              flow.getValue(),
+              vlessTransport.getValue(),
+              vlessTransport.getValue().equals("grpc") ? serviceName.getText() : "");
       secrets = new ProfileSecrets("", "", "", "", "", uuid.getText().trim());
     }
     Profile profile =
@@ -307,6 +334,9 @@ final class ProfileEditor extends BorderPane {
       tab = 2;
     } else if (field.startsWith("dns") || field.startsWith("domain")) {
       tab = 3;
+    } else if (field.equals("serviceName")
+        || (field.equals("transport") && type.getValue() == VpnType.VLESS)) {
+      tab = 0;
     } else if (List.of(
             "password",
             "privateKey",
@@ -332,6 +362,10 @@ final class ProfileEditor extends BorderPane {
       tab = 0;
     }
     showTab(tab);
+    if (field.equals("serviceName")
+        || (field.equals("transport") && type.getValue() == VpnType.VLESS)) {
+      connectionParameters.setExpanded(true);
+    }
     error.setText(message);
     error.setVisible(true);
     error.setManaged(true);
@@ -342,6 +376,8 @@ final class ProfileEditor extends BorderPane {
           case "port" -> port;
           case "dns" -> dns;
           case "healthUrl" -> healthUrl;
+          case "serviceName" -> serviceName;
+          case "transport" -> type.getValue() == VpnType.VLESS ? vlessTransport : transport;
           default -> tabs.get(tab);
         };
     focus.requestFocus();
@@ -367,7 +403,15 @@ final class ProfileEditor extends BorderPane {
     if (type.getValue() == VpnType.OPENVPN) {
       advanced.getChildren().add(Ui.field("Транспорт", transport, ""));
     } else {
-      advanced.getChildren().add(Ui.label("Транспорт: TCP", "field-label"));
+      advanced.getChildren().add(Ui.field("Транспорт VLESS", vlessTransport, "Как на сервере."));
+      VBox serviceField =
+          Ui.field(
+              "Имя сервиса gRPC",
+              serviceName,
+              "Из ссылки или настроек сервера. Может быть пустым.");
+      serviceField.visibleProperty().bind(vlessTransport.valueProperty().isEqualTo("grpc"));
+      serviceField.managedProperty().bind(serviceField.visibleProperty());
+      advanced.getChildren().add(serviceField);
     }
     advanced
         .getChildren()
@@ -377,9 +421,8 @@ final class ProfileEditor extends BorderPane {
                 healthUrl,
                 "Необязательно при наличии корпоративного DNS. Только HTTPS внутри выбранных"
                     + " IPv4-сетей. Публичный ресурс автоматически не используется."));
-    TitledPane extra = new TitledPane("Дополнительные параметры подключения", advanced);
-    extra.setExpanded(false);
-    form.getChildren().add(extra);
+    connectionParameters.setContent(advanced);
+    form.getChildren().add(connectionParameters);
   }
 
   private void accessFields() {

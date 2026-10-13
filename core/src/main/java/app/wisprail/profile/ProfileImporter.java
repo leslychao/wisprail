@@ -24,7 +24,9 @@ import java.util.UUID;
 /** Imports data into an unsaved draft. Never executes options from an imported document. */
 public final class ProfileImporter {
   private static final Set<String> VLESS_PARAMETERS =
-      Set.of("type", "security", "sni", "pbk", "sid", "fp", "flow", "encryption");
+      Set.of(
+          "type", "security", "sni", "pbk", "sid", "fp", "flow", "encryption", "serviceName",
+          "authority", "spx");
   private static final Set<String> INLINE_FIELDS =
       Set.of("ca", "cert", "key", "tls-auth", "tls-crypt", "auth-user-pass");
 
@@ -85,10 +87,19 @@ public final class ProfileImporter {
         }
       }
     }
-    if (!parameters.getOrDefault("type", "tcp").equals("tcp")
+    String transport = parameters.getOrDefault("type", "tcp");
+    if (!VlessSettings.SUPPORTED_TRANSPORTS.contains(transport)
         || !parameters.getOrDefault("encryption", "none").equals("none")) {
       throw new IllegalArgumentException(
-          "Поддерживается только VLESS TCP без дополнительного encryption");
+          "Поддерживается VLESS TCP или gRPC без дополнительного encryption");
+    }
+    if (!parameters.getOrDefault("authority", "").isEmpty()) {
+      throw new IllegalArgumentException(
+          "Отдельный authority gRPC не поддерживается сетевым компонентом");
+    }
+    if (!transport.equals("grpc")
+        && (parameters.containsKey("serviceName") || parameters.containsKey("authority"))) {
+      throw new IllegalArgumentException("Параметры gRPC требуют type=grpc");
     }
     TlsMode mode =
         switch (parameters.getOrDefault("security", "")) {
@@ -97,8 +108,23 @@ public final class ProfileImporter {
           default ->
               throw new IllegalArgumentException("Ссылка должна явно использовать TLS или Reality");
         };
-    if (mode == TlsMode.TLS && (parameters.containsKey("pbk") || parameters.containsKey("sid"))) {
+    if (mode == TlsMode.TLS
+        && (parameters.containsKey("pbk")
+            || parameters.containsKey("sid")
+            || parameters.containsKey("spx"))) {
       throw new IllegalArgumentException("Параметры Reality требуют security=reality");
+    }
+    List<String> notes = new ArrayList<>();
+    if (parameters.containsKey("spx")) {
+      String spiderPath = parameters.get("spx");
+      if (spiderPath.length() > 2048
+          || (!spiderPath.isEmpty() && !spiderPath.startsWith("/"))
+          || spiderPath.codePoints().anyMatch(Character::isISOControl)) {
+        throw new IllegalArgumentException("Некорректный путь spx Reality");
+      }
+      notes.add(
+          "Параметр spx относится к обходу сайта Xray при отказе Reality."
+              + " Сетевой компонент не выполняет этот обход; параметр не применяется.");
     }
     VlessSettings settings =
         new VlessSettings(
@@ -107,7 +133,9 @@ public final class ProfileImporter {
             parameters.getOrDefault("pbk", ""),
             parameters.getOrDefault("sid", ""),
             parameters.getOrDefault("fp", "chrome"),
-            parameters.getOrDefault("flow", ""));
+            parameters.getOrDefault("flow", ""),
+            transport,
+            parameters.getOrDefault("serviceName", ""));
     int port = uri.getPort() == -1 ? 443 : uri.getPort();
     if (port < 1 || port > 65535) {
       throw new IllegalArgumentException("Некорректный порт VLESS");
@@ -126,12 +154,9 @@ public final class ProfileImporter {
             List.of(),
             "",
             "");
-    return new ImportResult(
-        profile,
-        new ProfileSecrets("", "", "", "", "", uuid),
-        List.of(
-            "Укажите выбранные IPv4-сети и корпоративный DNS или HTTPS-ресурс проверки.",
-            "Профиль не сохранён и не подключён."));
+    notes.add("Укажите выбранные IPv4-сети и корпоративный DNS или HTTPS-ресурс проверки.");
+    notes.add("Профиль не сохранён и не подключён.");
+    return new ImportResult(profile, new ProfileSecrets("", "", "", "", "", uuid), notes);
   }
 
   private ImportResult importJson(String text) throws IOException {

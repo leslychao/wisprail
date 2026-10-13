@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import app.wisprail.storage.JsonCodec;
+import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,8 +27,61 @@ class ProfileImporterTest {
                     + "&sid=00&fp=chrome&flow=xtls-rprx-vision#%D0%A0%D0%B0%D0%B1%D0%BE%D1%82%D0%B0");
     assertEquals("Работа", result.profile().name());
     assertTrue(result.profile().networks().isEmpty());
-    assertEquals(TlsMode.REALITY, ((VlessSettings) result.profile().settings()).security());
+    VlessSettings settings = (VlessSettings) result.profile().settings();
+    assertEquals(TlsMode.REALITY, settings.security());
+    assertEquals("tcp", settings.transport());
+    assertEquals("", settings.serviceName());
     assertEquals(ProfileFixtures.secrets().uuid(), result.secrets().uuid());
+  }
+
+  @Test
+  void vlessImportsGrpcRealityLinkWithEmptyOptionalParameters() {
+    ImportResult result =
+        new ProfileImporter()
+            .importVless(
+                "vless://"
+                    + ProfileFixtures.secrets().uuid()
+                    + "@vpn.example.test:8443?type=grpc&encryption=none"
+                    + "&serviceName=&authority=&security=reality"
+                    + "&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    + "&fp=chrome&sni=example.test&sid=001122334455&spx=%2F#Imported");
+    assertEquals("Imported", result.profile().name());
+    assertEquals(8443, result.profile().port());
+    assertEquals(
+        new VlessSettings(
+            TlsMode.REALITY,
+            "example.test",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "001122334455",
+            "chrome",
+            "",
+            "grpc",
+            ""),
+        result.profile().settings());
+    assertEquals(ProfileFixtures.secrets().uuid(), result.secrets().uuid());
+    assertTrue(result.profile().networks().isEmpty());
+    assertTrue(result.notes().stream().anyMatch(note -> note.contains("spx")));
+  }
+
+  @Test
+  void namedGrpcServiceSurvivesSecretFreeJsonExportAndImport() throws IOException {
+    ImportResult imported =
+        new ProfileImporter()
+            .importVless(
+                "vless://"
+                    + ProfileFixtures.secrets().uuid()
+                    + "@vpn.example.test:443?type=grpc&security=tls"
+                    + "&serviceName=Example%2ETunnel-01");
+    VlessSettings settings = (VlessSettings) imported.profile().settings();
+    assertEquals("grpc", settings.transport());
+    assertEquals("Example.Tunnel-01", settings.serviceName());
+    String exported = JsonCodec.gson().toJson(new ProfileDocument(imported.profile()));
+    assertFalse(exported.contains(ProfileFixtures.secrets().uuid()));
+    Path source = directory.resolve("grpc.json");
+    Files.writeString(source, exported);
+    ImportResult reimported = new ProfileImporter().importFile(source);
+    assertEquals(settings, reimported.profile().settings());
+    assertTrue(reimported.secrets().isEmpty());
   }
 
   @Test
@@ -36,7 +90,13 @@ class ProfileImporterTest {
         List.of(
             "type=ws&security=tls",
             "security=tls&allowInsecure=1",
-            "security=tls&security=reality")) {
+            "security=tls&security=reality",
+            "type=grpc&security=tls&authority=private-authority.example",
+            "type=grpc&security=tls&serviceName=one&serviceName=two",
+            "type=grpc&security=tls&authority=&authority=",
+            "type=tcp&security=tls&serviceName=required",
+            "security=tls&spx=%2F",
+            "security=reality&spx=%2F&spx=%2F")) {
       IllegalArgumentException error =
           assertThrows(
               IllegalArgumentException.class,
@@ -48,14 +108,29 @@ class ProfileImporterTest {
                               + "@vpn.example.test:443?"
                               + query));
       assertFalse(error.getMessage().contains(ProfileFixtures.secrets().uuid()));
+      assertFalse(error.getMessage().contains("private-authority.example"));
     }
+  }
+
+  @Test
+  void customGrpcMethodPathRemainsDraftAndValidatorBlocksIt() {
+    ImportResult imported =
+        new ProfileImporter()
+            .importVless(
+                "vless://"
+                    + ProfileFixtures.secrets().uuid()
+                    + "@vpn.example.test?type=grpc&security=tls&serviceName=%2Fcustom%2Fmethod");
+    assertEquals("/custom/method", ((VlessSettings) imported.profile().settings()).serviceName());
+    assertTrue(
+        ProfileValidator.validate(imported.profile(), imported.secrets()).stream()
+            .anyMatch(issue -> issue.field().equals("serviceName")));
   }
 
   @Test
   void invalidVlessPartsHaveDistinctSafeExplanations() {
     String prefix = "vless://" + ProfileFixtures.secrets().uuid() + "@vpn.example.test:443";
     assertEquals(
-        "Поддерживается только VLESS TCP без дополнительного encryption",
+        "Поддерживается VLESS TCP или gRPC без дополнительного encryption",
         assertThrows(
                 IllegalArgumentException.class,
                 () -> new ProfileImporter().importVless(prefix + "?type=ws&security=tls"))
@@ -83,6 +158,35 @@ class ProfileImporterTest {
                 IllegalArgumentException.class,
                 () -> new ProfileImporter().importVless(prefix + "?sni=%wrong&security=tls"))
             .getMessage());
+  }
+
+  @Test
+  void realitySpiderPathIsBoundedAndCannotContainControls() {
+    String prefix =
+        "vless://" + ProfileFixtures.secrets().uuid() + "@vpn.example.test?security=reality";
+    for (String path : List.of("missing-slash", "%2F%0A", "/".repeat(2049))) {
+      assertEquals(
+          "Некорректный путь spx Reality",
+          assertThrows(
+                  IllegalArgumentException.class,
+                  () -> new ProfileImporter().importVless(prefix + "&spx=" + path))
+              .getMessage());
+    }
+  }
+
+  @Test
+  void existingTcpJsonWithoutExplicitTransportRemainsImportable() throws IOException {
+    JsonObject document =
+        JsonCodec.gson()
+            .toJsonTree(new ProfileDocument(ProfileFixtures.vless("Сохранённый TCP")))
+            .getAsJsonObject();
+    JsonObject settings = document.getAsJsonObject("profile").getAsJsonObject("settings");
+    settings.remove("transport");
+    settings.remove("serviceName");
+    Path source = directory.resolve("tcp.json");
+    Files.writeString(source, JsonCodec.gson().toJson(document));
+    assertEquals(
+        VlessSettings.defaults(), new ProfileImporter().importFile(source).profile().settings());
   }
 
   @Test
@@ -147,6 +251,14 @@ class ProfileImporterTest {
     Files.writeString(source, valid.replace("\"port\":443", "\"port\":\"443\""));
     assertThrows(IOException.class, () -> new ProfileImporter().importFile(source));
     Files.writeString(source, valid.replace("\"dns\":\"10.20.0.53\"", "\"dns\":null"));
+    assertThrows(IOException.class, () -> new ProfileImporter().importFile(source));
+    Files.writeString(source, valid.replace(",\"serviceName\":\"\"", ""));
+    assertThrows(IOException.class, () -> new ProfileImporter().importFile(source));
+    Files.writeString(source, valid.replace(",\"transport\":\"tcp\"", ""));
+    assertThrows(IOException.class, () -> new ProfileImporter().importFile(source));
+    Files.writeString(source, valid.replace("\"transport\":\"tcp\"", "\"transport\":null"));
+    assertThrows(IOException.class, () -> new ProfileImporter().importFile(source));
+    Files.writeString(source, valid.replace("\"serviceName\":\"\"", "\"serviceName\":null"));
     assertThrows(IOException.class, () -> new ProfileImporter().importFile(source));
   }
 

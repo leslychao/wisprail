@@ -16,6 +16,7 @@ import app.wisprail.connection.PreparedConnection;
 import app.wisprail.profile.ImportResult;
 import app.wisprail.profile.OpenVpnSettings;
 import app.wisprail.profile.Profile;
+import app.wisprail.profile.ProfileImporter;
 import app.wisprail.profile.ProfileRepository;
 import app.wisprail.profile.ProfileSecrets;
 import app.wisprail.profile.TlsMode;
@@ -26,12 +27,15 @@ import java.io.IOException;
 import java.io.StringWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.math.BigInteger;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPairGenerator;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,12 +58,14 @@ import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.ListView;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ScrollBar;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
 import javafx.scene.image.WritableImage;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
@@ -269,7 +275,7 @@ class DesktopViewTest {
                   "vpn.example",
                   443,
                   new VlessSettings(
-                      TlsMode.REALITY, "vpn.example", "public-key", "ab", "chrome", ""),
+                      TlsMode.REALITY, "vpn.example", "public-key", "ab", "chrome", "", "tcp", ""),
                   MOSCOW.networks(),
                   MOSCOW.dns(),
                   MOSCOW.domains(),
@@ -284,6 +290,105 @@ class DesktopViewTest {
           assertFalse(text(editor).contains("Сертификат пользователя"));
           return null;
         });
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "vpn-service", "Example.Tunnel-01"})
+  void importedGrpcSettingsSurviveEditorChangesSaveAndExport(String serviceName) throws Exception {
+    ImportResult imported =
+        new ProfileImporter()
+            .importVless(
+                "vless://00000000-0000-4000-8000-000000000001@vpn.example:443"
+                    + "?type=grpc&security=tls&sni=vpn.example&serviceName="
+                    + URLEncoder.encode(serviceName, StandardCharsets.UTF_8)
+                    + "#gRPC");
+    ProfileEditor.Draft draft =
+        fx(
+            () -> {
+              List<ProfileEditor.Draft> saves = new ArrayList<>();
+              ProfileEditor editor =
+                  new ProfileEditor(
+                      imported.profile(),
+                      imported.secrets(),
+                      false,
+                      saves::add,
+                      value -> {},
+                      () -> {},
+                      (title, consumer) -> {},
+                      value -> {},
+                      value -> {});
+              show(editor, 1070, 700);
+              assertFalse(editor.isDirty());
+              assertEquals(serviceName, field(editor, "serviceName", TextField.class).getText());
+              editor.showTab(1);
+              editor.showError("serviceName", "Проверьте имя сервиса gRPC");
+              TitledPane parameters =
+                  nodes(editor)
+                      .filter(TitledPane.class::isInstance)
+                      .map(TitledPane.class::cast)
+                      .findFirst()
+                      .orElseThrow();
+              assertTrue(parameters.isExpanded());
+              ComboBox<?> vlessTransport =
+                  nodes(editor)
+                      .filter(ComboBox.class::isInstance)
+                      .map(node -> (ComboBox<?>) node)
+                      .filter(control -> control.getItems().contains("grpc"))
+                      .findFirst()
+                      .orElseThrow();
+              assertEquals("gRPC", vlessTransport.getButtonCell().getText());
+              assertTrue(field(editor, "serviceName", TextField.class).getParent().isVisible());
+              vlessTransport.getSelectionModel().select(vlessTransport.getItems().indexOf("tcp"));
+              assertFalse(field(editor, "serviceName", TextField.class).getParent().isVisible());
+              assertEquals("", ((VlessSettings) editor.draft().profile().settings()).serviceName());
+              vlessTransport.getSelectionModel().select(vlessTransport.getItems().indexOf("grpc"));
+              assertTrue(field(editor, "serviceName", TextField.class).getParent().isVisible());
+              ComboBox<?> protocol =
+                  nodes(editor)
+                      .filter(ComboBox.class::isInstance)
+                      .map(node -> (ComboBox<?>) node)
+                      .filter(control -> control.getItems().contains(VpnType.OPENVPN))
+                      .findFirst()
+                      .orElseThrow();
+              protocol.getSelectionModel().select(protocol.getItems().indexOf(VpnType.OPENVPN));
+              assertEquals(
+                  "udp", ((OpenVpnSettings) editor.draft().profile().settings()).transport());
+              protocol.getSelectionModel().select(protocol.getItems().indexOf(VpnType.VLESS));
+              editor.showTab(1);
+              editor.showTab(0);
+              editor.putNetwork("", "10.20.0.0/16");
+              field(editor, "healthUrl", TextField.class).setText("https://10.20.0.5/health");
+              button(editor, "Сохранить").fire();
+              assertEquals(1, saves.size());
+              return saves.getFirst();
+            });
+    VlessSettings settings = (VlessSettings) draft.profile().settings();
+    assertEquals("grpc", settings.transport());
+    assertEquals(serviceName, settings.serviceName());
+    Map<String, byte[]> access = new HashMap<>();
+    SecretStore store =
+        new SecretStore() {
+          @Override
+          public void write(String reference, byte[] value) {
+            access.put(reference, value.clone());
+          }
+
+          @Override
+          public Optional<byte[]> read(String reference) {
+            return Optional.ofNullable(access.get(reference)).map(byte[]::clone);
+          }
+
+          @Override
+          public void delete(String reference) {
+            access.remove(reference);
+          }
+        };
+    ProfileRepository repository = new ProfileRepository(temporary.resolve("profiles"), store);
+    Profile saved = repository.save(draft.profile(), 0, draft.secrets());
+    assertEquals(settings, repository.find(saved.id()).orElseThrow().settings());
+    Path exported = temporary.resolve("grpc.json");
+    repository.exportProfile(saved, exported);
+    assertEquals(settings, new ProfileImporter().importFile(exported).profile().settings());
   }
 
   @Test

@@ -160,6 +160,12 @@ public final class SingboxConfig {
     vpn.addProperty("uuid", secrets.uuid());
     vpn.addProperty("packet_encoding", "xudp");
     optional(vpn, "flow", settings.flow());
+    if (settings.transport().equals("grpc")) {
+      JsonObject transport = new JsonObject();
+      transport.addProperty("type", "grpc");
+      transport.addProperty("service_name", settings.serviceName());
+      vpn.add("transport", transport);
+    }
     JsonObject tls = new JsonObject();
     tls.addProperty("enabled", true);
     tls.addProperty(

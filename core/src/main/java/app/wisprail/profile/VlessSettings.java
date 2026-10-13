@@ -1,5 +1,6 @@
 package app.wisprail.profile;
 
+import java.util.List;
 import java.util.Objects;
 
 public record VlessSettings(
@@ -8,8 +9,11 @@ public record VlessSettings(
     String publicKey,
     String shortId,
     String fingerprint,
-    String flow)
+    String flow,
+    String transport,
+    String serviceName)
     implements VpnSettings {
+  public static final List<String> SUPPORTED_TRANSPORTS = List.of("tcp", "grpc");
 
   public VlessSettings {
     Objects.requireNonNull(security);
@@ -18,10 +22,12 @@ public record VlessSettings(
     Objects.requireNonNull(shortId);
     Objects.requireNonNull(fingerprint);
     Objects.requireNonNull(flow);
+    Objects.requireNonNull(transport);
+    Objects.requireNonNull(serviceName);
   }
 
   public static VlessSettings defaults() {
-    return new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "");
+    return new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", "tcp", "");
   }
 
   @Override

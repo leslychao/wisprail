@@ -453,7 +453,7 @@ final class MainWindow implements AutoCloseable {
                 "Ссылка может содержать ключ доступа. "
                     + "Не публикуйте её. Вставьте ссылку самостоятельно.",
                 "hint"),
-            Ui.field("Ссылка VLESS", value, "Одно подключение, TCP с TLS или Reality."));
+            Ui.field("Ссылка VLESS", value, "Одно подключение, TCP или gRPC с TLS или Reality."));
     boolean accepted =
         dialogs
             .choose(

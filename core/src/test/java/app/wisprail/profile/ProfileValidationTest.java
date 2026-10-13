@@ -89,4 +89,34 @@ class ProfileValidationTest {
     assertFalse(encoded.contains(ProfileFixtures.secrets().uuid()));
     assertEquals("ProfileSecrets[REDACTED]", ProfileFixtures.secrets().toString());
   }
+
+  @Test
+  void grpcAllowsEmptyAndSimpleServiceNamesButRejectsIncompatibleTransportSettings() {
+    for (String serviceName : List.of("", "Example.Tunnel-01")) {
+      Profile profile =
+          ProfileFixtures.vless(
+              "gRPC",
+              new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", "grpc", serviceName));
+      assertTrue(ProfileValidator.validate(profile, ProfileFixtures.secrets()).isEmpty());
+    }
+    assertVlessIssue(
+        new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", "ws", ""), "transport");
+    assertVlessIssue(
+        new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", "tcp", "Tunnel"), "serviceName");
+    assertVlessIssue(
+        new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "xtls-rprx-vision", "grpc", ""),
+        "flow");
+    for (String serviceName : List.of("/custom/Tun", "service\nname", "x".repeat(1025))) {
+      assertVlessIssue(
+          new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", "grpc", serviceName),
+          "serviceName");
+    }
+  }
+
+  private static void assertVlessIssue(VlessSettings settings, String field) {
+    assertTrue(
+        ProfileValidator.validate(ProfileFixtures.vless("VPN", settings), ProfileFixtures.secrets())
+            .stream()
+            .anyMatch(issue -> issue.field().equals(field)));
+  }
 }

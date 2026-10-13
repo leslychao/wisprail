@@ -10,6 +10,7 @@ import app.wisprail.platform.NetworkPlan;
 import app.wisprail.profile.OpenVpnSettings;
 import app.wisprail.profile.Profile;
 import app.wisprail.profile.ProfileSecrets;
+import app.wisprail.profile.TlsMode;
 import app.wisprail.profile.VlessSettings;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -21,6 +22,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -28,8 +30,11 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.xbill.DNS.Flags;
 import org.xbill.DNS.Message;
 import org.xbill.DNS.Rcode;
@@ -38,29 +43,42 @@ import org.xbill.DNS.Section;
 class SingboxConfigIT {
   @TempDir Path temporary;
 
-  @Test
-  void vlessTlsCarriesRealUdpDnsResponseThroughPinnedEngineWithoutTun() throws Exception {
+  @ParameterizedTest
+  @CsvSource({"tcp,''", "grpc,''", "grpc,wisprail-test"})
+  void vlessTlsCarriesRealUdpDnsResponseThroughPinnedEngineWithoutTun(
+      String transport, String serviceName) throws Exception {
     Path executable = engine();
     EngineCredentials credentials = EngineCredentials.create();
     String uuid = UUID.randomUUID().toString();
     int vlessPort = availablePort();
     int dnsPort = availablePort();
-    try (DatagramSocket dns = new DatagramSocket(0, InetAddress.getLoopbackAddress());
-        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-      dns.setSoTimeout(12000);
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor();
+        DatagramSocket dns = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
+      dns.setSoTimeout(500);
+      AtomicBoolean finished = new AtomicBoolean();
       var answer =
           executor.submit(
               () -> {
                 DatagramPacket packet = new DatagramPacket(new byte[4096], 4096);
-                dns.receive(packet);
-                Message request = new Message(packet.getData());
-                Message response = new Message(request.getHeader().getID());
-                response.getHeader().setFlag(Flags.QR);
-                response.getHeader().setRcode(Rcode.NXDOMAIN);
-                response.addRecord(request.getQuestion(), Section.QUESTION);
-                byte[] wire = response.toWire();
-                dns.send(new DatagramPacket(wire, wire.length, packet.getSocketAddress()));
-                return request.getQuestion().getName().toString();
+                String question = "";
+                // Tunnel startup may outlive one probe; subsequent nonce queries also need replies.
+                while (!finished.get()) {
+                  packet.setLength(packet.getData().length);
+                  try {
+                    dns.receive(packet);
+                  } catch (SocketTimeoutException waiting) {
+                    continue;
+                  }
+                  Message request = new Message(packet.getData());
+                  Message response = new Message(request.getHeader().getID());
+                  response.getHeader().setFlag(Flags.QR);
+                  response.getHeader().setRcode(Rcode.NXDOMAIN);
+                  response.addRecord(request.getQuestion(), Section.QUESTION);
+                  byte[] wire = response.toWire();
+                  dns.send(new DatagramPacket(wire, wire.length, packet.getSocketAddress()));
+                  question = request.getQuestion().getName().toString();
+                }
+                return question;
               });
       JsonObject inbound = new JsonObject();
       inbound.addProperty("type", "vless");
@@ -74,6 +92,12 @@ class SingboxConfigIT {
       serverTls.addProperty("certificate", credentials.certificate());
       serverTls.addProperty("key", credentials.key());
       inbound.add("tls", serverTls);
+      if (transport.equals("grpc")) {
+        JsonObject grpc = new JsonObject();
+        grpc.addProperty("type", "grpc");
+        grpc.addProperty("service_name", serviceName);
+        inbound.add("transport", grpc);
+      }
       JsonObject server = new JsonObject();
       server.add("inbounds", array(inbound));
       JsonObject direct = new JsonObject();
@@ -87,7 +111,7 @@ class SingboxConfigIT {
               "Loopback",
               "127.0.0.1",
               vlessPort,
-              VlessSettings.defaults(),
+              new VlessSettings(TlsMode.TLS, "", "", "", "chrome", "", transport, serviceName),
               List.of("127.0.0.0/8"),
               "127.0.0.1",
               List.of("corp.example"),
@@ -138,8 +162,10 @@ class SingboxConfigIT {
             }
           }
         }
+        finished.set(true);
         assertTrue(answer.get(2, TimeUnit.SECONDS).endsWith(".corp.example."));
       } finally {
+        finished.set(true);
         if (local != null) {
           local.destroyForcibly().waitFor(5, TimeUnit.SECONDS);
         }
@@ -175,6 +201,17 @@ class SingboxConfigIT {
     Path engine = engine();
     EngineCredentials credentials = EngineCredentials.create();
     Profile vless = profile(VlessSettings.defaults());
+    Profile grpcReality =
+        profile(
+            new VlessSettings(
+                TlsMode.REALITY,
+                "vpn.example",
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "00",
+                "chrome",
+                "",
+                "grpc",
+                ""));
     Profile openVpn =
         profile(
             new OpenVpnSettings(
@@ -189,7 +226,7 @@ class SingboxConfigIT {
                 -1));
     ProfileSecrets secrets =
         new ProfileSecrets("test-password", "", "", "", "", UUID.randomUUID().toString());
-    for (Profile profile : List.of(vless, openVpn)) {
+    for (Profile profile : List.of(vless, grpcReality, openVpn)) {
       NetworkPlan network =
           new NetworkPlan(
               UUID.randomUUID(),
@@ -219,8 +256,21 @@ class SingboxConfigIT {
               .getAsJsonObject()
               .get("detour")
               .getAsString());
-      if (profile.settings() instanceof VlessSettings) {
-        assertFalse(config.getAsJsonArray("outbounds").get(0).getAsJsonObject().has("network"));
+      if (profile.settings() instanceof VlessSettings settings) {
+        JsonObject outbound = config.getAsJsonArray("outbounds").get(0).getAsJsonObject();
+        assertFalse(outbound.has("network"));
+        if (settings.transport().equals("grpc")) {
+          assertEquals("grpc", outbound.getAsJsonObject("transport").get("type").getAsString());
+          assertEquals("", outbound.getAsJsonObject("transport").get("service_name").getAsString());
+          assertTrue(
+              outbound
+                  .getAsJsonObject("tls")
+                  .getAsJsonObject("reality")
+                  .get("enabled")
+                  .getAsBoolean());
+        } else {
+          assertFalse(outbound.has("transport"));
+        }
       }
       Path file = temporary.resolve(profile.type() + ".json");
       Files.writeString(file, new Gson().toJson(config));

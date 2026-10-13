@@ -59,7 +59,9 @@ public final class JsonCodec {
           "tlsServerName",
           "tlsKeyDirection");
   private static final Set<String> VLESS_FIELDS =
-      Set.of("type", "security", "serverName", "publicKey", "shortId", "fingerprint", "flow");
+      Set.of(
+          "type", "security", "serverName", "publicKey", "shortId", "fingerprint", "flow",
+          "transport", "serviceName");
   private static final Gson GSON =
       new GsonBuilder()
           .setStrictness(Strictness.STRICT)
@@ -224,6 +226,13 @@ public final class JsonCodec {
         throw new JsonParseException("Не указан тип протокола");
       }
       requireString(object.get("type"));
+      if (object.get("type").getAsString().equals("VLESS")
+          && !object.has("transport")
+          && !object.has("serviceName")) {
+        // Version 1 TCP profiles written before explicit transports remain readable.
+        object.addProperty("transport", "tcp");
+        object.addProperty("serviceName", "");
+      }
       Set<String> fields =
           switch (object.get("type").getAsString()) {
             case "OPENVPN" -> OPENVPN_FIELDS;
