@@ -22,6 +22,8 @@ $transactionFile = Join-Path $stateParent 'installer-transaction.json'
 $removeJournal = Join-Path $stateParent 'uninstall-transaction.json'
 $ownerFile = Join-Path $state 'owner.txt'
 $binaryPath = '"' + $launcher + '" --service'
+# Windows PowerShell 5 must escape embedded quotes for sc.exe's native argument parser.
+$scBinaryPath = $binaryPath.Replace('"', '\"')
 $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $adminsSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
 $trustedSids = @($systemSid.Value, $adminsSid.Value,
@@ -51,12 +53,17 @@ function Assert-NoReparse([string]$Path) {
     }
 }
 
-function Assert-TrustedObject([string]$Path) {
+function Get-TrustedOwnerAcl([string]$Path) {
     Assert-NoReparse $Path
     $acl = Get-Acl -LiteralPath $Path
     if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trustedSids) {
         throw 'Системный объект создан посторонним пользователем.'
     }
+    return $acl
+}
+
+function Assert-TrustedObject([string]$Path) {
+    $acl = Get-TrustedOwnerAcl $Path
     foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
         if ($rule.IdentityReference.Value -eq 'S-1-3-0' -and
             ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) {
@@ -70,8 +77,7 @@ function Assert-TrustedObject([string]$Path) {
     }
 }
 
-function Set-SystemAcl([string]$Path, [bool]$Directory) {
-    Assert-NoReparse $Path
+function New-SystemAcl([bool]$Directory) {
     if ($Directory) {
         $acl = [Security.AccessControl.DirectorySecurity]::new()
         $inheritance = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
@@ -87,7 +93,12 @@ function Set-SystemAcl([string]$Path, [bool]$Directory) {
             [Security.AccessControl.AccessControlType]::Allow)
         $acl.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $Path -AclObject $acl
+    return $acl
+}
+
+function Set-SystemAcl([string]$Path, [bool]$Directory) {
+    Assert-NoReparse $Path
+    Set-Acl -LiteralPath $Path -AclObject (New-SystemAcl $Directory)
     # Change exactly this object; never walk an untrusted descendant tree.
     & icacls.exe $Path /setowner '*S-1-5-18' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось назначить системного владельца.' }
@@ -129,14 +140,34 @@ function Get-OwnedService {
     return $service
 }
 
+function Test-EmptyDirectory([string]$Path) {
+    $entries = [IO.Directory]::EnumerateFileSystemEntries($Path).GetEnumerator()
+    try {
+        return -not $entries.MoveNext()
+    } finally {
+        $entries.Dispose()
+    }
+}
+
 function Initialize-ServiceState {
     foreach ($directory in @($stateParent, $state)) {
         Assert-NoReparse $directory
         if (-not (Test-Path -LiteralPath $directory)) {
-            [IO.Directory]::CreateDirectory($directory) | Out-Null
+            # ProgramData grants inherited user write access; apply protection at creation.
+            [IO.Directory]::CreateDirectory($directory, (New-SystemAcl $true)) | Out-Null
         }
-        Assert-TrustedObject $directory
-        Set-SystemAcl $directory $true
+        Get-TrustedOwnerAcl $directory | Out-Null
+        if (Test-EmptyDirectory $directory) {
+            # A prior failed bootstrap can leave an empty, administrator-owned directory.
+            Set-SystemAcl $directory $true
+            if (-not (Test-EmptyDirectory $directory)) {
+                throw 'Содержимое системного каталога изменилось во время подготовки.'
+            }
+            Assert-TrustedObject $directory
+        } else {
+            Assert-TrustedObject $directory
+            Set-SystemAcl $directory $true
+        }
     }
     foreach ($file in @($ownerFile, $transactionFile, $removeJournal)) {
         if (Test-Path -LiteralPath $file) { Assert-TrustedObject $file }
@@ -364,9 +395,9 @@ try {
         if ($stopped.ExitCode -ne 0) { throw 'Служба не подтвердила очистку сети. Обновление остановлено.' }
     }
     if ($existing) {
-        & sc.exe config WisprailAgent binPath= $binaryPath start= auto | Out-Null
+        & sc.exe config WisprailAgent binPath= $scBinaryPath start= auto | Out-Null
     } else {
-        & sc.exe create WisprailAgent binPath= $binaryPath start= auto obj= LocalSystem DisplayName= 'Wisprail Network Component' | Out-Null
+        & sc.exe create WisprailAgent binPath= $scBinaryPath start= auto obj= LocalSystem DisplayName= 'Wisprail Network Component' | Out-Null
         $created = $LASTEXITCODE -eq 0
     }
     if ($LASTEXITCODE -ne 0) { throw 'Регистрация службы Windows завершилась ошибкой.' }

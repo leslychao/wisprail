@@ -14,6 +14,7 @@ import app.wisprail.connection.DiagnosticCheck;
 import app.wisprail.connection.DiagnosticReport;
 import app.wisprail.connection.PreparedConnection;
 import app.wisprail.platform.ComponentStatus;
+import app.wisprail.platform.PlatformDesktopIntegration;
 import app.wisprail.profile.ImportResult;
 import app.wisprail.profile.OpenVpnSettings;
 import app.wisprail.profile.Profile;
@@ -63,6 +64,7 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.ListView;
 import javafx.scene.control.PasswordField;
@@ -75,6 +77,7 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.robot.Robot;
 import javafx.stage.Stage;
@@ -341,6 +344,64 @@ class DesktopViewTest {
             return null;
           });
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {860, 1340})
+  void longEngineDetailsKeepSettingsTitlesReadableAndValuesInsideTheCard(int width)
+      throws Exception {
+    fx(
+        () -> {
+          BackgroundTasks tasks = new BackgroundTasks((operation, failure) -> {});
+          tasks.close();
+          SettingsView view =
+              new SettingsView(
+                  PlatformDesktopIntegration.create(temporary),
+                  new AppSettings(),
+                  tasks,
+                  new Dialogs(stage),
+                  true,
+                  component -> {});
+          view.showComponents();
+          field(view, "status", Label.class)
+              .setText("Компонент управления недоступен (код ОС 1060)");
+          Label version = field(view, "version", Label.class);
+          version.setText(
+              "sing-box version 1.14.2\n\n"
+                  + "Environment: go1.26.8 windows/amd64\n"
+                  + "Tags: with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,"
+                  + "with_clash_api,with_tailscale,with_ccm,with_ocm,with_cloudflared,"
+                  + "with_naive_outbound,with_purego,with_usbip,with_openvpn,with_openconnect,"
+                  + "badlinkname,tfogo_checklinkname0\n"
+                  + "Revision: af6e64c3b69e6132ebaee0e1a3d24e93903f6709\n"
+                  + "CGO: disabled");
+          field(view, "supported", Label.class).setText("OpenVPN · VLESS");
+          show(view, width, 700);
+
+          for (Node node : view.lookupAll(".setting-row")) {
+            HBox row = (HBox) node;
+            VBox text = (VBox) row.getChildren().getFirst();
+            Label title = (Label) text.getChildren().getFirst();
+            Label description = (Label) text.getChildren().get(1);
+            Node value = row.getChildren().get(1);
+            assertTrue(
+                title.getHeight() <= title.prefHeight(-1) + 1,
+                "Settings titles must remain on one line: " + title.getText());
+            assertTrue(
+                description.getHeight() <= description.prefHeight(-1) * 2 + 1,
+                "Settings descriptions must not become narrow columns: " + title.getText());
+            assertTrue(
+                value.getBoundsInParent().getMinX() >= text.getBoundsInParent().getMaxX() - 1,
+                "The value must not overlap its description: " + title.getText());
+            assertTrue(
+                value.getBoundsInParent().getMaxX()
+                    <= row.getWidth() - row.getInsets().getRight() + 1,
+                "The value must fit inside the settings card: " + title.getText());
+          }
+          assertTrue(version.getHeight() > version.prefHeight(-1));
+          capture(stage, "components-long-engine-" + width);
+          return null;
+        });
   }
 
   @Test

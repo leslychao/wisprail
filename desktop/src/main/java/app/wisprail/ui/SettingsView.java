@@ -22,6 +22,7 @@ import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 /** User settings and the real OS component status, with no implied network-health result. */
@@ -360,6 +361,7 @@ final class SettingsView extends BorderPane {
 
   private static HBox setting(String title, String description, Node control) {
     VBox text = new VBox(5, Ui.label(title, "field-label"), Ui.label(description, "hint"));
+    text.setMinWidth(Region.USE_PREF_SIZE);
     HBox.setHgrow(text, Priority.ALWAYS);
     HBox row = Ui.row(text, control);
     row.getStyleClass().add("setting-row");

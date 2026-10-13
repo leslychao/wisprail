@@ -14,6 +14,7 @@ import com.sun.jna.ptr.IntByReference;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.TimeUnit;
 
 /** Prepares the native service through the OS; system passwords never pass through Java. */
 public final class PlatformDesktopIntegration {
@@ -33,9 +34,28 @@ public final class PlatformDesktopIntegration {
       try (W32ServiceManager manager = new W32ServiceManager(Winsvc.SC_MANAGER_CONNECT);
           W32Service service =
               manager.openService(WindowsPipeTransport.SERVICE_NAME, Winsvc.SERVICE_QUERY_STATUS)) {
-        return service.queryStatus().dwCurrentState == Winsvc.SERVICE_RUNNING
-            ? new ComponentStatus(ComponentStatus.State.READY, "Компонент запущен")
-            : new ComponentStatus(ComponentStatus.State.STOPPED, "Компонент остановлен");
+        long started = System.nanoTime();
+        int state = service.queryStatus().dwCurrentState;
+        while ((state == Winsvc.SERVICE_START_PENDING || state == Winsvc.SERVICE_STOP_PENDING)
+            && System.nanoTime() - started < TimeUnit.SECONDS.toNanos(60)) {
+          try {
+            Thread.sleep(250);
+          } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Проверка запуска компонента прервана", exception);
+          }
+          state = service.queryStatus().dwCurrentState;
+        }
+        return switch (state) {
+          case Winsvc.SERVICE_RUNNING ->
+              new ComponentStatus(ComponentStatus.State.READY, "Компонент запущен");
+          case Winsvc.SERVICE_STOPPED ->
+              new ComponentStatus(ComponentStatus.State.STOPPED, "Компонент остановлен");
+          default ->
+              new ComponentStatus(
+                  ComponentStatus.State.ERROR,
+                  "Компонент меняет состояние или приостановлен. Повторите проверку позже.");
+        };
       } catch (Win32Exception exception) {
         return new ComponentStatus(
             exception.getErrorCode() == 1060
